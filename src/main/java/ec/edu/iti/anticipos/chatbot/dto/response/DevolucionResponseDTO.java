@@ -11,6 +11,7 @@ import java.time.LocalDate;
 public class DevolucionResponseDTO {
     private Long devolucionId;
     private Long liquidacionId;
+    private Long tramiteId;
     private BigDecimal monto;
     private LocalDate fechaDevolucion;
     private String comprobantePdf;

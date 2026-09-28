@@ -1,0 +1,24 @@
+spring.application.name=chatbot-anticipos-iti
+server.port=8081
+
+# Configuración de PostgreSQL en Azure
+spring.datasource.url=jdbc:postgresql://pg-chatbot-iti-hector.postgres.database.azure.com:5432/chatbot_anticipos_iti?sslmode=require
+spring.datasource.username=adminuser
+spring.datasource.password=TU_CONTRASEÑA
+spring.datasource.driver-class-name=org.postgresql.Driver
+
+# Configuración de JPA/Hibernate
+spring.jpa.hibernate.ddl-auto=update
+spring.jpa.show-sql=true
+spring.jpa.properties.hibernate.format_sql=true
+
+# Azure AI Document Intelligence
+azure.document.endpoint=https://docintel-chatbot-iti.cognitiveservices.azure.com/
+azure.document.key=TU_KEY_DE_DOCUMENT_INTELLIGENCE
+
+# Configuración de logging
+logging.level.org.springframework=INFO
+
+# Twilio
+twilio.account.sid=TU_ACCOUNT_SID
+twilio.auth.token=TU_AUTH_TOKEN

@@ -21,7 +21,7 @@ public class Notificacion {
     @Column(name = "destinatario", length = 100)
     private String destinatario;
 
-    @Column(name = "tipo", length = 30)
+    @Column(name = "tipo", length = 100)
     private String tipo;
 
     @Column(name = "fecha_envio")
