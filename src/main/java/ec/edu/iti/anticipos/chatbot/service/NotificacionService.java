@@ -7,6 +7,9 @@ import ec.edu.iti.anticipos.chatbot.entity.Tramite;
 import ec.edu.iti.anticipos.chatbot.repository.NotificacionRepository;
 import ec.edu.iti.anticipos.chatbot.repository.TramiteRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.mail.SimpleMailMessage;
+import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
@@ -16,6 +19,7 @@ import java.util.Optional;
 /**
  * Servicio para la entidad Notificacion.
  * Contiene la lógica de negocio relacionada con las notificaciones enviadas a los actores.
+ * El envío de correo se realiza de forma asíncrona para no bloquear la respuesta a Twilio.
  */
 @Service
 @RequiredArgsConstructor
@@ -23,7 +27,7 @@ public class NotificacionService {
 
     private final NotificacionRepository notificacionRepository;
     private final TramiteRepository tramiteRepository;
-    private final EmailService emailService;
+    private final JavaMailSender mailSender;
 
     // Listar todas las notificaciones
     public List<NotificacionResponseDTO> listarTodos() {
@@ -39,7 +43,7 @@ public class NotificacionService {
                 .map(this::convertirAResponse);
     }
 
-    // Guardar una nueva notificación y enviar el correo
+    // Guardar una nueva notificación (guarda en BD y envía correo asíncrono)
     public NotificacionResponseDTO guardar(NotificacionRequestDTO dto) {
         Tramite tramite = tramiteRepository.findById(dto.getTramiteId())
                 .orElseThrow(() -> new RuntimeException("Trámite no encontrado"));
@@ -53,18 +57,27 @@ public class NotificacionService {
 
         Notificacion guardada = notificacionRepository.save(notificacion);
 
-        // Enviar el correo
-        String asunto = "Notificación del sistema de anticipos ITI";
-        String cuerpo = "Estimado/a usuario/a,\n\n" +
-                "Se le informa que su trámite ha cambiado de estado.\n" +
-                "Tipo: " + dto.getTipo() + "\n" +
-                "Fecha: " + LocalDate.now() + "\n\n" +
-                "Atentamente,\n" +
-                "Sistema de Gestión de Anticipos ITI";
-
-        emailService.enviarCorreo(dto.getDestinatario(), asunto, cuerpo);
+        // ✅ Enviar correo de forma ASÍNCRONA (no bloquea la respuesta)
+        enviarCorreoAsync(dto.getDestinatario(), dto.getTipo(),
+                "Tienes una nueva notificación del sistema de anticipos del ITI. " +
+                        "Trámite ID: " + dto.getTramiteId() + ". Tipo: " + dto.getTipo());
 
         return convertirAResponse(guardada);
+    }
+
+    // ✅ Método asíncrono para enviar correo
+    @Async
+    public void enviarCorreoAsync(String destinatario, String asunto, String cuerpo) {
+        try {
+            SimpleMailMessage message = new SimpleMailMessage();
+            message.setTo(destinatario);
+            message.setSubject(asunto);
+            message.setText(cuerpo);
+            mailSender.send(message);
+            System.out.println("Correo enviado a: " + destinatario);
+        } catch (Exception e) {
+            System.err.println("Error al enviar correo: " + e.getMessage());
+        }
     }
 
     // Eliminar una notificación por ID

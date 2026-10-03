@@ -1,24 +1,66 @@
+# ============================================
+# Ejemplo de configuración del backend
+# Copia este archivo como application.properties
+# y reemplaza los valores con los reales.
+# ============================================
+
 spring.application.name=chatbot-anticipos-iti
+
+# ============================================
+# Servidor
+# ============================================
 server.port=8081
 
-# Configuración de PostgreSQL en Azure
-spring.datasource.url=jdbc:postgresql://pg-chatbot-iti-hector.postgres.database.azure.com:5432/chatbot_anticipos_iti?sslmode=require
-spring.datasource.username=adminuser
+# ============================================
+# PostgreSQL en Azure
+# ============================================
+spring.datasource.url=jdbc:postgresql://TU_SERVIDOR.postgres.database.azure.com:5432/TU_BD?sslmode=require
+spring.datasource.username=TU_USUARIO
 spring.datasource.password=TU_CONTRASEÑA
 spring.datasource.driver-class-name=org.postgresql.Driver
 
-# Configuración de JPA/Hibernate
+# ============================================
+# JPA / Hibernate
+# ============================================
 spring.jpa.hibernate.ddl-auto=update
 spring.jpa.show-sql=true
 spring.jpa.properties.hibernate.format_sql=true
 
-# Azure AI Document Intelligence
-azure.document.endpoint=https://docintel-chatbot-iti.cognitiveservices.azure.com/
-azure.document.key=TU_KEY_DE_DOCUMENT_INTELLIGENCE
-
-# Configuración de logging
+# ============================================
+# Logging
+# ============================================
 logging.level.org.springframework=INFO
 
-# Twilio
-twilio.account.sid=TU_ACCOUNT_SID
-twilio.auth.token=TU_AUTH_TOKEN
+# ============================================
+# JWT
+# ============================================
+jwt.secret=CAMBIAR_POR_UNA_CLAVE_LARGA_Y_SEGURA_DE_MINIMO_32_CARACTERES
+jwt.expiration=86400000
+
+# ============================================
+# Azure AI Document Intelligence
+# ============================================
+azure.document.endpoint=https://TU_RECURSO.cognitiveservices.azure.com/
+azure.document.key=TU_KEY_DE_DOCUMENT_INTELLIGENCE
+
+# ============================================
+# Ollama (IA local)
+# ============================================
+spring.ai.ollama.base-url=http://localhost:11434
+spring.ai.ollama.chat.model=llama3.2:3b
+
+# ============================================
+# Notificaciones por correo (Gmail SMTP)
+# ============================================
+spring.mail.host=smtp.gmail.com
+spring.mail.port=465
+spring.mail.username=TU_CORREO@gmail.com
+spring.mail.password=TU_CONTRASEÑA_DE_APLICACION
+spring.mail.properties.mail.smtp.auth=true
+spring.mail.properties.mail.smtp.ssl.enable=true
+
+# ============================================
+# Telegram
+# ============================================
+telegram.bot.username=TU_BOT_USERNAME
+telegram.bot.token=TU_BOT_TOKEN

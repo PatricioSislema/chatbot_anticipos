@@ -50,37 +50,54 @@ public class DocenteChatService {
         // LOGS DE DIAGNÓSTICO
         System.out.println("=== DOCENTE PROCESAR ===");
         System.out.println("Mensaje: [" + mensaje + "]");
-        System.out.println("mensajeLower: [" + mensajeLower + "]");
         System.out.println("AccionPendiente: [" + sesion.getAccionPendiente() + "]");
         System.out.println("SubiendoFacturas: [" + sesion.isSubiendoFacturas() + "]");
-        System.out.println("FormularioLiquidacion: [" + (sesion.getFormularioLiquidacion() != null) + "]");
         System.out.println("Facturas: [" + sesion.getFacturasExtraidas().size() + "]");
 
-        // El docente pide solicitar anticipo (con sinónimos)
+        // 1. SOLICITAR
         if (mensajeLower.contains("solicitar") || mensajeLower.contains("pedir")
                 || mensajeLower.contains("anticipo") || mensajeLower.contains("fondos")
                 || mensajeLower.contains("plata") || mensajeLower.contains("dinero")
-                || mensajeLower.contains("adelanto") || mensajeLower.contains("requerir")) {
+                || mensajeLower.contains("adelanto") || mensajeLower.contains("nueva solicitud")
+                || mensajeLower.equals("1")) {
             sesion.setAccionPendiente("SOLICITAR");
             sesion.setSubiendoFacturas(false);
             return "Entendido. Sube el formulario de solicitud en PDF ya llenado y firmado.";
         }
 
-        // El docente pide liquidar anticipo (con sinónimos)
+        // 2. LIQUIDAR
         if (mensajeLower.contains("liquidar") || mensajeLower.contains("rendir")
                 || mensajeLower.contains("justificar") || mensajeLower.contains("cuadrar")
-                || mensajeLower.contains("comprobante") || mensajeLower.contains("gastos")) {
+                || mensajeLower.equals("2")) {
             sesion.setAccionPendiente("LIQUIDAR");
             sesion.setSubiendoFacturas(false);
             return "Entendido. Sube el formulario de liquidación en PDF.";
         }
 
-        // El docente termina de subir facturas
+        // 3. CONSULTAR
+        if (mensajeLower.contains("estado") || mensajeLower.contains("seguimiento")
+                || mensajeLower.contains("consultar") || mensajeLower.contains("tramite")
+                || mensajeLower.contains("trámite") || mensajeLower.equals("3")) {
+            return consultarEstado(sesion);
+        }
+
+        // 4. AYUDA
+        if (mensajeLower.contains("ayuda") || mensajeLower.contains("opciones")
+                || mensajeLower.contains("puedo hacer") || mensajeLower.contains("menu")
+                || mensajeLower.contains("menú") || mensajeLower.equals("4")) {
+            return "Puedo ayudarte con:\n" +
+                    "1. Solicitar un anticipo\n" +
+                    "2. Liquidar un anticipo\n" +
+                    "3. Consultar el estado de tus trámites\n" +
+                    "4. Resolver dudas generales";
+        }
+
+        // 5. LISTO (terminó de subir facturas)
         if (mensajeLower.contains("listo") && sesion.isSubiendoFacturas()) {
             return calcularYMostrarSaldo(sesion);
         }
 
-        // El docente confirma
+        // 6. CONFIRMAR
         if (mensajeLower.contains("sí") || mensajeLower.contains("si") || mensajeLower.contains("confirmo")) {
 
             if ("SOLICITAR".equals(sesion.getAccionPendiente())
@@ -95,18 +112,8 @@ public class DocenteChatService {
             }
         }
 
-        // Consultar estado
-        if (mensajeLower.contains("estado") || mensajeLower.contains("seguimiento")) {
-            return consultarEstado(sesion);
-        }
-
-        // Ayuda
-        if (mensajeLower.contains("ayuda")) {
-            return "Puedo ayudarte a: solicitar, liquidar o consultar el estado de tus anticipos.";
-        }
-
-        // El docente sube comprobante de devolución
-        if (mensajeLower.contains("devolucion") || mensajeLower.contains("comprobante")) {
+        // 7. DEVOLUCIÓN
+        if (mensajeLower.contains("devolucion") || mensajeLower.contains("devolución")) {
             sesion.setAccionPendiente("DEVOLUCION");
             return "Sube el comprobante de depósito de la devolución.";
         }
@@ -117,6 +124,18 @@ public class DocenteChatService {
     // ==================== DOCUMENTOS ====================
     public String procesarDocumento(MultipartFile archivo, SesionUsuario sesion) {
         try {
+
+            // VALIDAR que sea un PDF
+            String nombreArchivo = archivo.getOriginalFilename();
+            String tipoContenido = archivo.getContentType();
+
+            if (nombreArchivo == null || !nombreArchivo.toLowerCase().endsWith(".pdf")) {
+                return "⚠️ El archivo debe ser un PDF. Por favor, sube el documento en formato PDF.";
+            }
+
+            if (tipoContenido == null || !tipoContenido.contains("pdf")) {
+                return "⚠️ El archivo no es un PDF válido. Por favor, vuelve a intentarlo.";
+            }
             byte[] bytes = archivo.getBytes();
 
             // FORMULARIO DE SOLICITUD

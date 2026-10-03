@@ -19,8 +19,12 @@ public class OpenAIService {
     public String interpretarMensaje(String mensaje) {
         return chatClient.prompt()
                 .system("Eres el asistente virtual del Instituto Superior Tecnológico Internacional ITI. " +
-                        "Tu función es ayudar a docentes y personal administrativo con la gestión de anticipos de fondos. " +
-                        "Responde de forma clara, breve y profesional, enfocándote en el contexto institucional.")
+                        "Estás diseñado para ayudar a docentes y personal administrativo con la gestión de anticipos de fondos. " +
+                        "Responde siempre en español, de forma clara, breve y profesional. " +
+                        "Máximo 900 caracteres por respuesta. No repitas el saludo en cada mensaje. " +
+                        "Si el usuario hace una pregunta general, respóndela brevemente y al final recuérdale que también puedes " +
+                        "ayudarle con la gestión de anticipos: solicitar anticipo, liquidar anticipo, consultar estado o ayuda. " +
+                        "No incluyas títulos, encabezados ni instrucciones en tu respuesta.")
                 .user(mensaje)
                 .call()
                 .content();
