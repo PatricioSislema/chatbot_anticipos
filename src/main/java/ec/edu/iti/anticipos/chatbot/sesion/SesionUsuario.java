@@ -1,3 +1,4 @@
+
 package ec.edu.iti.anticipos.chatbot.sesion;
 
 import ec.edu.iti.anticipos.chatbot.dto.response.FormularioLiquidacionDTO;
@@ -13,6 +14,7 @@ import java.util.List;
  * Almacena el estado de autenticación, el rol, la última actividad
  * y los formularios extraídos durante el flujo conversacional.
  */
+
 @Data
 public class SesionUsuario {
 
@@ -51,9 +53,22 @@ public class SesionUsuario {
     // Última vez que el usuario interactuó (para controlar el timeout)
     private LocalDateTime ultimaActividad;
 
+    // ===== NUEVO (FASE 2) =====
+    // Indica si el usuario está confirmando la cancelación de una operación
+    private boolean esperandoConfirmacionCancelacion;
+    // Indica si el usuario está confirmando el cierre de sesión
+    private boolean esperandoConfirmacionCerrarSesion;
+
+    // Indica si el bot está procesando un documento del usuario
+    private boolean procesandoDocumento;
+
+    // Contador de intentos fallidos de contraseña
+    private int intentosFallidos = 0;
+
     public SesionUsuario() {
         this.autenticado = false;
         this.esperandoContrasena = false;
         this.ultimaActividad = LocalDateTime.now();
     }
 }
+

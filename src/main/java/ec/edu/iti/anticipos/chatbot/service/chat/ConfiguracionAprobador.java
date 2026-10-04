@@ -25,4 +25,8 @@ public class ConfiguracionAprobador {
 
     // Correo del destinatario en caso de rechazo (siempre el docente)
     private String destinatarioRechazo;
+
+    // ===== NUEVO =====
+    // Nombre del siguiente rol a notificar (ej: "Director Financiero", "Contadora")
+    private String nombreSiguienteRol;
 }

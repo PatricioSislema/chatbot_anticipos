@@ -2,6 +2,7 @@ package ec.edu.iti.anticipos.chatbot.service.chat;
 
 import ec.edu.iti.anticipos.chatbot.dto.request.HistorialEstadoRequestDTO;
 import ec.edu.iti.anticipos.chatbot.dto.request.NotificacionRequestDTO;
+import ec.edu.iti.anticipos.chatbot.dto.response.TramiteDetalleDTO;
 import ec.edu.iti.anticipos.chatbot.dto.response.TramiteResponseDTO;
 import ec.edu.iti.anticipos.chatbot.service.HistorialEstadoService;
 import ec.edu.iti.anticipos.chatbot.service.NotificacionService;
@@ -11,6 +12,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Servicio especializado en la lógica de la Colectora.
@@ -26,17 +28,20 @@ public class ColectoraChatService {
 
     public String procesar(String mensaje, String mensajeLower, SesionUsuario sesion) {
 
-        // Ver trámites aprobados por la Contadora
-        if (mensajeLower.contains("pendiente") || mensajeLower.contains("revisar")) {
-            return listarPendientes();
-        }
-
-        // Registrar un trámite específico
+        // Aceptar "registrar ID"
         if (mensajeLower.matches("registrar\\s+\\d+")) {
             return seleccionarTramite(mensaje, sesion);
         }
 
-        // Confirmar transferencia
+        // Aceptar solo el número
+        if (mensajeLower.matches("\\d+")) {
+            return seleccionarTramitePorId(Long.parseLong(mensajeLower), sesion);
+        }
+
+        if (mensajeLower.contains("pendiente") || mensajeLower.contains("revisar")) {
+            return listarPendientes();
+        }
+
         if (mensajeLower.contains("transferencia") || mensajeLower.contains("confirmar")) {
             return registrarTransferencia(sesion);
         }
@@ -44,46 +49,73 @@ public class ColectoraChatService {
         return null;
     }
 
-    // Lista trámites en estado "Aprobado por Contadora"
     private String listarPendientes() {
         List<TramiteResponseDTO> pendientes = tramiteService.listarPorEstado("Aprobado por Contadora");
 
         if (pendientes.isEmpty()) {
-            return "No hay transferencias pendientes.";
+            return "📋 No hay transferencias pendientes.\n\n" +
+                    "👉 Escribe *menu* para volver al menú principal.";
         }
 
-        StringBuilder lista = new StringBuilder("Transferencias pendientes:\n");
+        StringBuilder lista = new StringBuilder("📋 *Transferencias pendientes:* (" + pendientes.size() + ")\n\n");
         for (TramiteResponseDTO t : pendientes) {
-            lista.append("- Trámite ID: ").append(t.getTramiteId())
-                    .append(" | Solicitante: ").append(t.getNombreUsuario())
-                    .append("\n");
+            lista.append("🆔 ").append(t.getTramiteId())
+                    .append(" — ").append(t.getNombreUsuario());
+            Optional<TramiteDetalleDTO> detalle = tramiteService.obtenerDetalle(t.getTramiteId());
+            if (detalle.isPresent() && detalle.get().getProposito() != null) {
+                String proposito = detalle.get().getProposito();
+                if (proposito.length() > 30) proposito = proposito.substring(0, 30) + "...";
+                lista.append(" · ").append(proposito);
+            }
+            lista.append("\n");
         }
-        lista.append("\nEscribe 'registrar ID' para registrar la transferencia.");
+        lista.append("\n👉 Escribe *registrar ID* o solo el número.");
         return lista.toString();
     }
 
-    // Selecciona un trámite para registrar transferencia
     private String seleccionarTramite(String mensaje, SesionUsuario sesion) {
         try {
             Long tramiteId = Long.parseLong(mensaje.replaceAll("[^0-9]", ""));
-            sesion.setTramiteEnRevision(tramiteId);
-            return "Trámite ID: " + tramiteId + " seleccionado.\n" +
-                    "Escribe 'confirmar transferencia' para registrar.";
+            return seleccionarTramitePorId(tramiteId, sesion);
         } catch (NumberFormatException e) {
-            return "Formato incorrecto. Escribe 'registrar ID' (ej: registrar 3).";
+            return "⚠️ Formato incorrecto.";
         }
     }
 
-    // Registra la transferencia y cambia el estado
+    private String seleccionarTramitePorId(Long tramiteId, SesionUsuario sesion) {
+        sesion.setTramiteEnRevision(tramiteId);
+
+        Optional<TramiteDetalleDTO> detalleOpt = tramiteService.obtenerDetalle(tramiteId);
+        if (detalleOpt.isEmpty()) {
+            return "⚠️ No encontré el trámite *" + tramiteId + "*.";
+        }
+
+        TramiteDetalleDTO d = detalleOpt.get();
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("📋 *Trámite #").append(d.getTramiteId()).append("*\n\n");
+        sb.append("👤 Solicitante: ").append(d.getNombreUsuario()).append("\n");
+        sb.append("📝 Tipo: ").append(d.getNombreTipoTramite()).append("\n");
+        sb.append("📊 Estado: ").append(d.getEstado()).append("\n");
+
+        if (d.getPresupuesto() != null) {
+            sb.append("\n💰 Presupuesto: $").append(d.getPresupuesto()).append("\n");
+            if (d.getProposito() != null) sb.append("🎯 Propósito: ").append(d.getProposito()).append("\n");
+        }
+
+        sb.append("\n¿Registrar la transferencia?\n\n");
+        sb.append("Escribe *confirmar transferencia*.");
+        return sb.toString();
+    }
+
     private String registrarTransferencia(SesionUsuario sesion) {
         if (sesion.getTramiteEnRevision() == null) {
-            return "Primero debes seleccionar un trámite con 'registrar ID'.";
+            return "⚠️ No has seleccionado ningún trámite.";
         }
 
         Long tramiteId = sesion.getTramiteEnRevision();
         tramiteService.actualizarEstado(tramiteId, "Transferido");
 
-        // Historial
         HistorialEstadoRequestDTO historialDTO = new HistorialEstadoRequestDTO();
         historialDTO.setTramiteId(tramiteId);
         historialDTO.setEstadoAnterior("Aprobado por Contadora");
@@ -92,14 +124,12 @@ public class ColectoraChatService {
         historialDTO.setObservacion("Transferencia registrada por la Colectora");
         historialEstadoService.guardar(historialDTO);
 
-        // Notificar al docente
         NotificacionRequestDTO notifDocente = new NotificacionRequestDTO();
         notifDocente.setTramiteId(tramiteId);
         notifDocente.setDestinatario("juan.perez@iti.edu.ec");
         notifDocente.setTipo("Anticipo transferido");
         notificacionService.guardar(notifDocente);
 
-        // Notificar a la contadora
         NotificacionRequestDTO notifContadora = new NotificacionRequestDTO();
         notifContadora.setTramiteId(tramiteId);
         notifContadora.setDestinatario("ana.torres@iti.edu.ec");
@@ -108,6 +138,8 @@ public class ColectoraChatService {
 
         sesion.setTramiteEnRevision(null);
 
-        return "Transferencia registrada. El anticipo ha sido transferido al docente.";
+        return "✅ Transferencia registrada correctamente.\n\n" +
+                "💰 El anticipo ha sido transferido al docente.\n\n" +
+                "📬 Se ha notificado al *Docente* y a la *Contadora*.";
     }
 }

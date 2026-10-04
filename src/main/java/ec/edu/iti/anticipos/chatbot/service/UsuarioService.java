@@ -19,6 +19,7 @@ import java.util.Optional;
  * Servicio para la entidad Usuario.
  * Contiene la lógica de negocio relacionada con los usuarios y el inicio de sesión.
  * Las contraseñas se almacenan hasheadas con BCrypt.
+ * Incluye bloqueo por intentos fallidos.
  */
 @Service
 @RequiredArgsConstructor
@@ -49,6 +50,8 @@ public class UsuarioService {
         usuario.setNombre(dto.getNombre());
         usuario.setCorreo(dto.getCorreo());
         usuario.setContrasena(passwordEncoder.encode(dto.getContrasena()));
+        usuario.setBloqueado(false);
+        usuario.setIntentosFallidos(0);
 
         Rol rol = rolRepository.findById(dto.getRolId())
                 .orElseThrow(() -> new RuntimeException("Rol no encontrado"));
@@ -67,7 +70,6 @@ public class UsuarioService {
         usuario.setNombre(dto.getNombre());
         usuario.setCorreo(dto.getCorreo());
 
-        // Solo cambia el rol si viene uno nuevo
         if (dto.getRolId() != null) {
             Rol rol = rolRepository.findById(dto.getRolId())
                     .orElseThrow(() -> new RuntimeException("Rol no encontrado"));
@@ -86,12 +88,21 @@ public class UsuarioService {
         usuarioRepository.save(usuario);
     }
 
+    // Desbloquear usuario
+    public void desbloquear(Long id) {
+        Usuario usuario = usuarioRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Usuario no encontrado"));
+        usuario.setBloqueado(false);
+        usuario.setIntentosFallidos(0);
+        usuarioRepository.save(usuario);
+    }
+
     // Eliminar usuario por ID
     public void eliminar(Long id) {
         usuarioRepository.deleteById(id);
     }
 
-    // Iniciar sesión con correo y contraseña (usando BCrypt)
+    // Iniciar sesión con correo y contraseña (usando BCrypt + bloqueo)
     public LoginResponseDTO login(LoginRequestDTO dto) {
         String correo = dto.getCorreo().trim().toLowerCase();
         String contrasena = dto.getContrasena().trim();
@@ -106,24 +117,56 @@ public class UsuarioService {
                 .findFirst();
 
         LoginResponseDTO response = new LoginResponseDTO();
-        if (usuarioOpt.isPresent()) {
-            Usuario usuario = usuarioOpt.get();
 
-            if (passwordEncoder.matches(contrasena, usuario.getContrasena())) {
-                response.setUsuarioId(usuario.getUsuarioId());
-                response.setNombre(usuario.getNombre());
-                response.setCorreo(usuario.getCorreo());
-                response.setRolNombre(usuario.getRol().getNombre());
-                response.setAutenticado(true);
-                System.out.println("Login exitoso para: " + usuario.getNombre());
-            } else {
-                response.setAutenticado(false);
-                System.out.println("Login fallido: contraseña incorrecta");
-            }
-        } else {
+        // Usuario no encontrado
+        if (usuarioOpt.isEmpty()) {
             response.setAutenticado(false);
             System.out.println("Login fallido: usuario no encontrado");
+            return response;
         }
+
+        Usuario usuario = usuarioOpt.get();
+
+        // Usuario bloqueado
+        if (Boolean.TRUE.equals(usuario.getBloqueado())) {
+            response.setAutenticado(false);
+            response.setBloqueado(true);
+            System.out.println("Login fallido: usuario bloqueado");
+            return response;
+        }
+
+        // Contraseña correcta
+        if (passwordEncoder.matches(contrasena, usuario.getContrasena())) {
+            usuario.setIntentosFallidos(0);
+            usuarioRepository.save(usuario);
+
+            response.setUsuarioId(usuario.getUsuarioId());
+            response.setNombre(usuario.getNombre());
+            response.setCorreo(usuario.getCorreo());
+            response.setRolNombre(usuario.getRol().getNombre());
+            response.setAutenticado(true);
+            response.setBloqueado(false);
+
+            System.out.println("Login exitoso para: " + usuario.getNombre());
+            return response;
+        }
+
+        // Contraseña incorrecta
+        int nuevosIntentos = (usuario.getIntentosFallidos() == null ? 0 : usuario.getIntentosFallidos()) + 1;
+        usuario.setIntentosFallidos(nuevosIntentos);
+
+        if (nuevosIntentos >= 3) {
+            usuario.setBloqueado(true);
+            System.out.println("Usuario BLOQUEADO por 3 intentos fallidos: " + usuario.getCorreo());
+        }
+
+        usuarioRepository.save(usuario);
+
+        response.setAutenticado(false);
+        response.setIntentosRestantes(3 - nuevosIntentos);
+        response.setBloqueado(usuario.getBloqueado());
+
+        System.out.println("Login fallido: contraseña incorrecta. Intentos: " + nuevosIntentos);
         return response;
     }
 

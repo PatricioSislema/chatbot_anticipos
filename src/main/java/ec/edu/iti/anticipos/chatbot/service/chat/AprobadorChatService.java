@@ -2,6 +2,7 @@ package ec.edu.iti.anticipos.chatbot.service.chat;
 
 import ec.edu.iti.anticipos.chatbot.dto.request.HistorialEstadoRequestDTO;
 import ec.edu.iti.anticipos.chatbot.dto.request.NotificacionRequestDTO;
+import ec.edu.iti.anticipos.chatbot.dto.response.TramiteDetalleDTO;
 import ec.edu.iti.anticipos.chatbot.dto.response.TramiteResponseDTO;
 import ec.edu.iti.anticipos.chatbot.service.HistorialEstadoService;
 import ec.edu.iti.anticipos.chatbot.service.NotificacionService;
@@ -11,6 +12,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Servicio común para los roles aprobadores: Jefe, Director y Contadora.
@@ -24,31 +26,34 @@ public class AprobadorChatService {
     private final NotificacionService notificacionService;
     private final HistorialEstadoService historialEstadoService;
 
+    private static final int MAX_PROPOSITO = 30;
+
     // Procesa los mensajes del aprobador
     public String procesar(String mensaje, String mensajeLower, SesionUsuario sesion,
                            ConfiguracionAprobador config) {
 
-        // Si está esperando el motivo del rechazo
         if (sesion.isEsperandoMotivoRechazo()) {
             return procesarMotivoRechazo(mensaje, sesion, config);
         }
 
-        // El aprobador quiere revisar un trámite específico (con número)
+        // Aceptar "revisar ID"
         if (mensajeLower.matches("revisar\\s+\\d+")) {
             return seleccionarTramite(mensaje, sesion);
         }
 
-        // El aprobador pide ver trámites pendientes
+        // Aceptar solo el número (ej. "21")
+        if (mensajeLower.matches("\\d+")) {
+            return seleccionarTramitePorId(Long.parseLong(mensajeLower), sesion);
+        }
+
         if (mensajeLower.contains("pendiente") || mensajeLower.contains("revisar")) {
             return listarPendientes(sesion, config);
         }
 
-        // El aprobador aprueba
         if (mensajeLower.contains("aprobar")) {
             return aprobar(sesion, config);
         }
 
-        // El aprobador rechaza
         if (mensajeLower.contains("rechazar")) {
             return iniciarRechazo(sesion);
         }
@@ -56,51 +61,117 @@ public class AprobadorChatService {
         return null;
     }
 
-    // Lista los trámites pendientes según el estado configurado
+    // Lista los trámites pendientes con nombre + propósito truncado
     private String listarPendientes(SesionUsuario sesion, ConfiguracionAprobador config) {
         List<TramiteResponseDTO> pendientes = tramiteService.listarPorEstado(config.getEstadoBuscado());
 
         if (pendientes.isEmpty()) {
-            return "No hay trámites pendientes de revisión.";
+            return "📋 No hay trámites pendientes de revisión.\n\n" +
+                    "👉 Escribe *menu* para volver al menú principal.";
         }
 
-        StringBuilder lista = new StringBuilder("Trámites pendientes:\n");
+        StringBuilder lista = new StringBuilder("📋 *Solicitudes de anticipo pendientes:* (")
+                .append(pendientes.size()).append(")\n\n");
+
         for (TramiteResponseDTO t : pendientes) {
-            lista.append("- Trámite ID: ").append(t.getTramiteId())
-                    .append(" | Solicitante: ").append(t.getNombreUsuario())
-                    .append(" | Estado: ").append(t.getEstado())
-                    .append("\n");
+            lista.append("🆔 ").append(t.getTramiteId())
+                    .append(" — ").append(t.getNombreUsuario());
+
+            // Agregar el propósito si existe
+            Optional<TramiteDetalleDTO> detalleOpt = tramiteService.obtenerDetalle(t.getTramiteId());
+            if (detalleOpt.isPresent() && detalleOpt.get().getProposito() != null) {
+                String proposito = detalleOpt.get().getProposito();
+                if (proposito.length() > MAX_PROPOSITO) {
+                    proposito = proposito.substring(0, MAX_PROPOSITO) + "...";
+                }
+                lista.append(" · ").append(proposito);
+            }
+
+            lista.append("\n");
         }
-        lista.append("\nEscribe 'revisar ID' para ver el detalle de un trámite.");
+
+        lista.append("\n👉 Escribe *revisar ID* o solo el número para ver el detalle.\n");
+        lista.append("Ejemplo: revisar 15 o 15");
         return lista.toString();
     }
 
-    // Selecciona un trámite para revisar
+    // Selecciona un trámite (versión vieja que recibe "revisar 15")
     private String seleccionarTramite(String mensaje, SesionUsuario sesion) {
         try {
             Long tramiteId = Long.parseLong(mensaje.replaceAll("[^0-9]", ""));
-            sesion.setTramiteEnRevision(tramiteId);
-            return "Revisando trámite ID: " + tramiteId + ".\n" +
-                    "Puedes escribir 'aprobar' o 'rechazar'.";
+            return seleccionarTramitePorId(tramiteId, sesion);
         } catch (NumberFormatException e) {
-            return "Formato incorrecto. Escribe 'revisar ID' (ej: revisar 3).";
+            return "⚠️ Formato incorrecto.\n\n" +
+                    "📌 Debes escribir *revisar* seguido del número.\n\n" +
+                    "👉 Ejemplo: revisar 15";
         }
     }
 
-    // Aprueba el trámite
+    // Selecciona un trámite por ID y muestra su detalle completo
+    private String seleccionarTramitePorId(Long tramiteId, SesionUsuario sesion) {
+        sesion.setTramiteEnRevision(tramiteId);
+
+        Optional<TramiteDetalleDTO> detalleOpt = tramiteService.obtenerDetalle(tramiteId);
+
+        if (detalleOpt.isEmpty()) {
+            return "⚠️ No encontré el trámite *" + tramiteId + "*.\n\n" +
+                    "📌 Verifica que el ID sea correcto.";
+        }
+
+        TramiteDetalleDTO detalle = detalleOpt.get();
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("📋 *Trámite #").append(detalle.getTramiteId()).append("*\n\n");
+        sb.append("👤 Solicitante: ").append(detalle.getNombreUsuario()).append("\n");
+        sb.append("📝 Tipo: ").append(detalle.getNombreTipoTramite()).append("\n");
+        sb.append("📅 Fecha: ").append(detalle.getFechaCreacion()).append("\n");
+        sb.append("📊 Estado: ").append(detalle.getEstado()).append("\n");
+
+        if (detalle.getPresupuesto() != null) {
+            sb.append("\n💰 Presupuesto: $").append(detalle.getPresupuesto()).append("\n");
+            if (detalle.getUnidad() != null) {
+                sb.append("🏢 Unidad: ").append(detalle.getUnidad()).append("\n");
+            }
+            if (detalle.getCampus() != null) {
+                sb.append("📍 Campus: ").append(detalle.getCampus()).append("\n");
+            }
+            if (detalle.getProposito() != null) {
+                sb.append("🎯 Propósito: ").append(detalle.getProposito()).append("\n");
+            }
+            if (detalle.getLugar() != null) {
+                sb.append("📌 Lugar: ").append(detalle.getLugar()).append("\n");
+            }
+            if (detalle.getFechaRealizacion() != null) {
+                sb.append("📅 Fecha realización: ").append(detalle.getFechaRealizacion()).append("\n");
+            }
+        }
+
+        if (detalle.getTotalGastado() != null) {
+            sb.append("\n💰 Total gastado: $").append(detalle.getTotalGastado()).append("\n");
+            if (detalle.getSaldo() != null) {
+                sb.append("📈 Saldo: $").append(detalle.getSaldo()).append("\n");
+            }
+        }
+
+        sb.append("\n¿Qué quieres hacer?");
+
+        return sb.toString();
+    }
+
+    // Aprueba el trámite y notifica al rol específico
     private String aprobar(SesionUsuario sesion, ConfiguracionAprobador config) {
         if (sesion.getTramiteEnRevision() == null) {
-            return "Primero debes seleccionar un trámite con 'revisar ID'.";
+            return "⚠️ No has seleccionado ningún trámite.\n\n" +
+                    "📌 Primero debes elegir uno de la lista.\n\n" +
+                    "👉 Escribe *revisar ID* o solo el número para seleccionarlo.";
         }
 
         Long tramiteId = sesion.getTramiteEnRevision();
         String estadoAnterior = config.getEstadoBuscado();
         String nuevoEstado = config.getNuevoEstado();
 
-        // Actualizar estado del trámite
         tramiteService.actualizarEstado(tramiteId, nuevoEstado);
 
-        // Registrar historial
         HistorialEstadoRequestDTO historialDTO = new HistorialEstadoRequestDTO();
         historialDTO.setTramiteId(tramiteId);
         historialDTO.setEstadoAnterior(estadoAnterior);
@@ -109,7 +180,6 @@ public class AprobadorChatService {
         historialDTO.setObservacion("Aprobado por " + config.getRolNombre());
         historialEstadoService.guardar(historialDTO);
 
-        // Notificar al siguiente actor
         NotificacionRequestDTO notifDTO = new NotificacionRequestDTO();
         notifDTO.setTramiteId(tramiteId);
         notifDTO.setDestinatario(config.getDestinatarioAprobacion());
@@ -118,16 +188,21 @@ public class AprobadorChatService {
 
         sesion.setTramiteEnRevision(null);
 
-        return "Trámite " + tramiteId + " aprobado. Se ha notificado al siguiente responsable.";
+        // Mensaje con nombre del siguiente rol
+        return "✅ Trámite *" + tramiteId + "* aprobado correctamente.\n\n" +
+                "📬 Se ha notificado al *" + config.getNombreSiguienteRol() + "*.";
     }
 
     // Inicia el flujo de rechazo (pide motivo)
     private String iniciarRechazo(SesionUsuario sesion) {
         if (sesion.getTramiteEnRevision() == null) {
-            return "Primero debes seleccionar un trámite con 'revisar ID'.";
+            return "⚠️ No has seleccionado ningún trámite.\n\n" +
+                    "📌 Primero debes elegir uno de la lista.\n\n" +
+                    "👉 Escribe *revisar ID* o solo el número para seleccionarlo.";
         }
         sesion.setEsperandoMotivoRechazo(true);
-        return "¿Cuál es el motivo del rechazo?";
+        return "✍️ ¿Cuál es el motivo del rechazo?\n\n" +
+                "👉 Escribe el motivo y se enviará al docente.";
     }
 
     // Procesa el motivo del rechazo y rechaza el trámite
@@ -139,10 +214,8 @@ public class AprobadorChatService {
         Long tramiteId = sesion.getTramiteEnRevision();
         String estadoAnterior = config.getEstadoBuscado();
 
-        // Actualizar estado del trámite
         tramiteService.actualizarEstado(tramiteId, "Rechazado");
 
-        // Registrar historial
         HistorialEstadoRequestDTO historialDTO = new HistorialEstadoRequestDTO();
         historialDTO.setTramiteId(tramiteId);
         historialDTO.setEstadoAnterior(estadoAnterior);
@@ -151,18 +224,17 @@ public class AprobadorChatService {
         historialDTO.setObservacion("Rechazado por " + config.getRolNombre() + ": " + motivo);
         historialEstadoService.guardar(historialDTO);
 
-        // Notificar al docente
         NotificacionRequestDTO notifDTO = new NotificacionRequestDTO();
         notifDTO.setTramiteId(tramiteId);
         notifDTO.setDestinatario(config.getDestinatarioRechazo());
         notifDTO.setTipo("Trámite rechazado por " + config.getRolNombre());
         notificacionService.guardar(notifDTO);
 
-        // Limpiar sesión
         sesion.setTramiteEnRevision(null);
         sesion.setMotivoRechazo(null);
 
-        return "Trámite " + tramiteId + " rechazado. Motivo: " + motivo +
-                ". Se ha notificado al docente.";
+        return "❌ Trámite *" + tramiteId + "* rechazado.\n\n" +
+                "📌 Motivo: " + motivo + "\n\n" +
+                "📬 Se ha notificado al *Docente*.";
     }
 }

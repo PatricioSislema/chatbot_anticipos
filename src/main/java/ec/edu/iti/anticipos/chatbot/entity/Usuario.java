@@ -6,6 +6,7 @@ import lombok.Data;
 /**
  * Esta entidad representa la tabla "usuario".
  * Almacena los usuarios del sistema con sus credenciales y rol asignado.
+ * Incluye el estado de bloqueo y el contador de intentos fallidos.
  */
 @Data
 @Entity
@@ -33,4 +34,11 @@ public class Usuario {
     @ManyToOne
     @JoinColumn(name = "rol_id", nullable = false)
     private Rol rol;
+
+    // ===== NUEVOS CAMPOS =====
+    @Column(name = "bloqueado", nullable = false)
+    private Boolean bloqueado = false;
+
+    @Column(name = "intentos_fallidos", nullable = false)
+    private Integer intentosFallidos = 0;
 }

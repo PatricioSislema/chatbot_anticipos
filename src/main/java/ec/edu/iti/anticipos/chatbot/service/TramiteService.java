@@ -10,6 +10,9 @@ import ec.edu.iti.anticipos.chatbot.repository.TramiteRepository;
 import ec.edu.iti.anticipos.chatbot.repository.UsuarioRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import ec.edu.iti.anticipos.chatbot.dto.response.TramiteDetalleDTO;
+import ec.edu.iti.anticipos.chatbot.repository.SolicitudRepository;
+import ec.edu.iti.anticipos.chatbot.repository.LiquidacionRepository;
 
 import java.time.LocalDate;
 import java.util.List;
@@ -26,6 +29,8 @@ public class TramiteService {
     private final TramiteRepository tramiteRepository;
     private final UsuarioRepository usuarioRepository;
     private final TipoTramiteRepository tipoTramiteRepository;
+    private final SolicitudRepository solicitudRepository;
+    private final LiquidacionRepository liquidacionRepository;
 
     // Listar todos los trámites
     public List<TramiteResponseDTO> listarTodos() {
@@ -99,5 +104,45 @@ public class TramiteService {
                 .stream()
                 .map(this::convertirAResponse)
                 .toList();
+    }
+
+    // Obtener el detalle completo de un trámite
+    public Optional<TramiteDetalleDTO> obtenerDetalle(Long tramiteId) {
+        return tramiteRepository.findById(tramiteId).map(tramite -> {
+            TramiteDetalleDTO dto = new TramiteDetalleDTO();
+
+            // Datos del trámite
+            dto.setTramiteId(tramite.getTramiteId());
+            dto.setEstado(tramite.getEstado());
+            dto.setFechaCreacion(tramite.getFechaCreacion());
+            dto.setNombreTipoTramite(tramite.getTipoTramite().getNombre());
+
+            // Datos del usuario
+            if (tramite.getUsuario() != null) {
+                dto.setUsuarioId(tramite.getUsuario().getUsuarioId());
+                dto.setNombreUsuario(tramite.getUsuario().getNombre());
+                dto.setCorreoUsuario(tramite.getUsuario().getCorreo());
+                dto.setCedulaUsuario(tramite.getUsuario().getCedula());
+            }
+
+            // Datos de la solicitud (si existe)
+            solicitudRepository.findByTramiteTramiteId(tramiteId).ifPresent(solicitud -> {
+                dto.setUnidad(solicitud.getUnidad());
+                dto.setCampus(solicitud.getCampus());
+                dto.setProposito(solicitud.getProposito());
+                dto.setLugar(solicitud.getLugar());
+                dto.setFechaRealizacion(solicitud.getFechaRealizacion());
+                dto.setPresupuesto(solicitud.getPresupuesto());
+            });
+
+            // Datos de la liquidación (si existe)
+            liquidacionRepository.findByTramiteTramiteId(tramiteId).ifPresent(liquidacion -> {
+                dto.setTotalGastado(liquidacion.getTotalGastado());
+                dto.setSaldo(liquidacion.getSaldo());
+                dto.setFechaPresentacion(liquidacion.getFechaPresentacion());
+            });
+
+            return dto;
+        });
     }
 }

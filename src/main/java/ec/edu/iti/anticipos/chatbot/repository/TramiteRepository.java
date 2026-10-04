@@ -7,7 +7,8 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
-
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import java.util.List;
 
 /**
@@ -34,4 +35,11 @@ public interface TramiteRepository extends JpaRepository<Tramite, Long> {
     Page<Tramite> filtrar(@Param("estado") String estado,
                           @Param("usuarioId") Long usuarioId,
                           Pageable pageable);
+
+    // Buscar trámites por usuario y varios estados
+    @Query("SELECT t FROM Tramite t WHERE t.usuario.usuarioId = :usuarioId " +
+            "AND t.estado IN :estados " +
+            "ORDER BY t.fechaCreacion DESC")
+    List<Tramite> buscarPorUsuarioYEstados(@Param("usuarioId") Long usuarioId,
+                                           @Param("estados") List<String> estados);
 }

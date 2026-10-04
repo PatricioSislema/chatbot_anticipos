@@ -12,6 +12,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import ec.edu.iti.anticipos.chatbot.dto.response.TramiteDetalleDTO;
 
 import java.util.List;
 
@@ -46,6 +47,14 @@ public class TramiteController {
 
         Page<TramiteResumenDTO> dto = resultado.map(this::convertirAResumen);
         return ResponseEntity.ok(dto);
+    }
+
+    // Obtener detalle completo de un trámite
+    @GetMapping("/{id}/detalle")
+    public ResponseEntity<TramiteDetalleDTO> detalle(@PathVariable Long id) {
+        return tramiteService.obtenerDetalle(id)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
     }
 
     // Buscar un trámite por ID

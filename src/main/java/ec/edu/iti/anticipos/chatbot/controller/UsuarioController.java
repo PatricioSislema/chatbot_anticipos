@@ -84,4 +84,11 @@ public class UsuarioController {
         usuarioService.eliminar(id);
         return ResponseEntity.noContent().build();
     }
+
+    @PatchMapping("/{id}/desbloquear")
+    @PreAuthorize("hasRole('ADMINISTRADOR')")
+    public ResponseEntity<?> desbloquear(@PathVariable Long id) {
+        usuarioService.desbloquear(id);
+        return ResponseEntity.ok("Usuario desbloqueado");
+    }
 }
