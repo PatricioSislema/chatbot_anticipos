@@ -12,7 +12,7 @@
 	</parent>
 
 	<groupId>ec.edu.iti.anticipos</groupId>
-	<artifactId>spring-boot-starter-test</artifactId>
+	<artifactId>chatbot-anticipos-iti</artifactId>
 	<version>0.0.1-SNAPSHOT</version>
 	<name>chatbot-anticipos-iti</name>
 	<description>Chatbot para la gestión de anticipos de fondos del ITI</description>

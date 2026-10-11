@@ -22,7 +22,7 @@ class UsuarioServiceTest {
     void loginConCredencialesCorrectas() {
         // Preparar
         LoginRequestDTO dto = new LoginRequestDTO();
-        dto.setCorreo("juan.perez@iti.edu.ec");
+        dto.setCorreo("hector.sislema@iti.edu.ec");
         dto.setContrasena("123456");
 
         // Ejecutar
@@ -30,15 +30,15 @@ class UsuarioServiceTest {
 
         // Verificar
         assertTrue(response.isAutenticado());
-        assertEquals("Juan Pérez", response.getNombre());
-        assertEquals("Docente", response.getRolNombre());
+        assertEquals("Héctor Sislema", response.getNombre());
+        assertEquals("Funcionario", response.getRolNombre());
     }
 
     @Test
     void loginConCredencialesIncorrectas() {
-        // Preparar
+        // Preparar: usuario que NO existe en BD
         LoginRequestDTO dto = new LoginRequestDTO();
-        dto.setCorreo("juan.perez@iti.edu.ec");
+        dto.setCorreo("noexiste@iti.edu.ec");
         dto.setContrasena("claveincorrecta");
 
         // Ejecutar

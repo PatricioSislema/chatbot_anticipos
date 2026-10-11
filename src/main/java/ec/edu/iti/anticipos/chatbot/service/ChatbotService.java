@@ -9,9 +9,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 import ec.edu.iti.anticipos.chatbot.dto.response.DevolucionResponseDTO;
-import ec.edu.iti.anticipos.chatbot.service.DevolucionService;
-import java.util.Optional;
 
+import java.util.Optional;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -21,9 +20,6 @@ import java.util.Map;
 
 /**
  * Servicio coordinador del chatbot.
- * Maneja la autenticación, los comandos generales, la clasificación de
- * intenciones con IA, la ayuda contextual, la cancelación y el cierre
- * de sesión. Delega la lógica específica a los servicios por rol.
  */
 @Service
 @RequiredArgsConstructor
@@ -31,7 +27,7 @@ public class ChatbotService {
 
     private final OpenAIService openAIService;
     private final UsuarioService usuarioService;
-    private final DocenteChatService docenteChatService;
+    private final FuncionarioChatService funcionarioChatService;
     private final AprobadorChatService aprobadorChatService;
     private final ColectoraChatService colectoraChatService;
     private final AsistenteContableChatService asistenteContableChatService;
@@ -39,11 +35,10 @@ public class ChatbotService {
     private final DevolucionService devolucionService;
 
     private final Map<Long, SesionUsuario> sesiones = new HashMap<>();
-
     private static final long TIMEOUT_MINUTOS = 30;
 
     // ============================================================
-    // MÉTODO PRINCIPAL: PROCESAR MENSAJE (texto plano)
+    // PROCESAR MENSAJE
     // ============================================================
     public String procesarMensaje(String mensaje, Long chatId) {
         System.out.println("=== PROCESAR MENSAJE ===");
@@ -58,7 +53,6 @@ public class ChatbotService {
             sesiones.put(chatId, sesion);
         }
 
-        // ============ EXPIRACIÓN DE SESIÓN ============
         if (sesion.isAutenticado() && expiroSesion(sesion)) {
             sesiones.remove(chatId);
             return "⚠️ Tu sesión ha expirado por inactividad.\n\n" +
@@ -68,16 +62,12 @@ public class ChatbotService {
 
         sesion.setUltimaActividad(LocalDateTime.now());
 
-        // ============================================
-        // CONVERSIÓN DE "1"/"2" A "si"/"no" CUANDO ESPERA CONFIRMACIÓN
-        // Casos: solicitud subida, liquidación subida, o facturas subidas
-        // ============================================
+        // Conversión de "1"/"2" a "si"/"no"
         if (sesion.isAutenticado()
                 && sesion.getAccionPendiente() != null
                 && (sesion.getFormularioSolicitud() != null
                 || sesion.getFormularioLiquidacion() != null
                 || sesion.isSubiendoFacturas())) {
-
             if (mensajeLower.equals("1")) {
                 mensajeLower = "si";
                 mensaje = "si";
@@ -88,29 +78,52 @@ public class ChatbotService {
         }
 
         // ============================================
-        // CLASIFICACIÓN CON IA (FASE A)
+        // ✅ CALLBACK: SUBIR COMPROBANTE (va PRIMERO, antes de todo)
+        // ============================================
+        if (mensajeLower.equals("subir_comprobante")) {
+            if (sesion.isEsperandoComprobanteDevolucion()) {
+                return "📎 Perfecto.\n\n" +
+                        "👉 Adjunta el comprobante de depósito en formato PDF desde este chat.";
+            }
+            return "ℹ️ En este momento no necesitas subir un comprobante.\n\n" +
+                    "👉 Sigue las instrucciones del bot.";
+        }
+
+        // ============================================
+        // CLASIFICACIÓN CON IA
         // ============================================
         if (sesion.isAutenticado()
                 && sesion.getAccionPendiente() == null
-                && !sesion.isSubiendoFacturas()           // ← NUEVO
+                && !sesion.isSubiendoFacturas()
+                && !sesion.isEsperandoComprobanteDevolucion()
                 && !sesion.isEsperandoConfirmacionCancelacion()
                 && !sesion.isEsperandoConfirmacionCerrarSesion()
                 && !sesion.isEsperandoMotivoRechazo()
                 && !mensajeLower.startsWith("cerrar_sesion")
                 && !mensajeLower.matches("\\d+")
                 && !mensajeLower.matches("revisar\\s+\\d+")
+                && !mensajeLower.matches("validar\\s+devolucion\\s+\\d+")
+                && !mensajeLower.matches("registrar\\s+comprobante\\s+\\d+")
+                && !mensajeLower.matches("rechazar\\s+devolucion\\s+\\d+")
+                && !mensajeLower.matches("autorizar\\s+reembolso\\s+\\d+")
+                && !mensajeLower.matches("informar\\s+colectora\\s+\\d+")
+                && !mensajeLower.matches("cerrar\\s+reembolso\\s+\\d+")
+                && !mensajeLower.matches("aprobar\\s+orden\\s+\\d+")
                 && !mensajeLower.contains("pendiente")
                 && !mensajeLower.contains("revisar")
                 && !mensajeLower.contains("transferencia")
                 && !mensajeLower.contains("confirmar")
-                && !mensajeLower.equals("listo")) {       // ← NUEVO {
+                && !mensajeLower.equals("listo")
+                && !mensajeLower.equals("reembolsos")
+                && !mensajeLower.equals("ordenes")) {
 
             boolean esComandoDirecto = esComando(mensajeLower,
                     "menu", "menú", "inicio", "ayuda", "opciones", "help", "?",
                     "salir", "cancelar", "cancela", "volver", "atras", "atrás", "regresar",
                     "1", "2", "3", "4", "5", "6", "si", "sí", "no", "listo",
                     "pendientes", "pendiente", "revisar", "aprobar", "rechazar",
-                    "registrar", "transferencia", "confirmar", "enviar", "devolver");
+                    "registrar", "transferencia", "confirmar", "enviar", "devolver",
+                    "subir_comprobante");
 
             if (!esComandoDirecto) {
                 String intencion = openAIService.clasificarIntencion(mensaje);
@@ -153,20 +166,17 @@ public class ChatbotService {
             }
         }
 
-        // ============ CONFIRMACIÓN DE CANCELACIÓN ============
+        // Confirmación de cancelación
         if (sesion.isEsperandoConfirmacionCancelacion()) {
             return procesarConfirmacionCancelacion(mensajeLower, sesion);
         }
 
-        // ============ CONFIRMACIÓN DE CERRAR SESIÓN ============
+        // Confirmación de cerrar sesión
         if (sesion.isEsperandoConfirmacionCerrarSesion()) {
             return procesarConfirmacionCerrarSesion(mensajeLower, sesion, chatId);
         }
 
-        // ============================================
-        // CALLBACKS DE BOTONES
-        // ============================================
-
+        // Callbacks de cerrar sesión
         if (mensajeLower.equals("cerrar_sesion_confirmar")) {
             sesion.setEsperandoConfirmacionCerrarSesion(true);
             return "⚠️ ¿Estás seguro de que quieres cerrar sesión?\n\n" +
@@ -184,11 +194,7 @@ public class ChatbotService {
             return "👍 Perfecto, continúo con tu sesión.";
         }
 
-        // ============================================
-        // COMANDOS GENERALES
-        // ============================================
-
-        // SALIR
+        // Comandos generales
         if (esComando(mensajeLower, "salir", "cerrar sesion", "cerrar sesión", "logout")) {
             if (sesion.isAutenticado()) {
                 sesion.setEsperandoConfirmacionCerrarSesion(true);
@@ -197,7 +203,6 @@ public class ChatbotService {
             }
         }
 
-        // AYUDA
         if (esComando(mensajeLower, "ayuda", "opciones", "puedo hacer", "help", "?")) {
             if (sesion.isAutenticado()) {
                 return menuAyudaContextual(sesion);
@@ -207,7 +212,6 @@ public class ChatbotService {
             }
         }
 
-        // MENÚ
         if (esComando(mensajeLower, "menu", "menú", "inicio", "volver al menu", "volver al menú")) {
             if (sesion.isAutenticado()) {
                 limpiarOperacion(sesion);
@@ -215,7 +219,6 @@ public class ChatbotService {
             }
         }
 
-        // CANCELAR
         if (esComando(mensajeLower, "cancelar", "cancela", "abortar")) {
             if (sesion.isAutenticado() && sesion.getAccionPendiente() != null) {
                 sesion.setEsperandoConfirmacionCancelacion(true);
@@ -228,7 +231,6 @@ public class ChatbotService {
             return "ℹ️ No hay ninguna operación en curso.";
         }
 
-        // VOLVER
         if (esComando(mensajeLower, "volver", "atras", "atrás", "regresar")) {
             if (sesion.isAutenticado()) {
                 limpiarOperacion(sesion);
@@ -236,12 +238,10 @@ public class ChatbotService {
             }
         }
 
-        // LOGIN
         if (!sesion.isAutenticado()) {
-            return manejarLogin(mensaje, mensajeLower, sesion);
+            return manejarLogin(mensaje, mensajeLower, sesion, chatId);
         }
 
-        // DELEGAR
         return delegarPorRol(mensaje, mensajeLower, sesion);
     }
 
@@ -251,19 +251,18 @@ public class ChatbotService {
     public ResponseBot procesarMensajeConBotones(String mensaje, Long chatId) {
         SesionUsuario sesionAntes = sesiones.get(chatId);
         boolean teniaFormularioSolicitud = sesionAntes != null && sesionAntes.getFormularioSolicitud() != null;
-        boolean teniaFormularioLiquidacion = sesionAntes != null && sesionAntes.getFormularioLiquidacion() != null;
         boolean estabaSubiendoFacturas = sesionAntes != null && sesionAntes.isSubiendoFacturas();
 
         String texto = procesarMensaje(mensaje, chatId);
 
         SesionUsuario sesion = sesiones.get(chatId);
-
         if (sesion == null) {
             return new ResponseBot(texto);
         }
 
         List<List<ResponseBot.Boton>> botones = new ArrayList<>();
 
+        // Confirmación de cerrar sesión
         if (sesion.isEsperandoConfirmacionCerrarSesion()) {
             botones.add(ResponseBot.fila(
                     ResponseBot.boton("✅ Sí, cerrar sesión", "cerrar_sesion_si"),
@@ -272,6 +271,7 @@ public class ChatbotService {
             return new ResponseBot(texto, botones);
         }
 
+        // Confirmación de cancelación
         if (sesion.isEsperandoConfirmacionCancelacion()) {
             botones.add(ResponseBot.fila(
                     ResponseBot.boton("✅ Sí, cancelar", "1"),
@@ -280,6 +280,18 @@ public class ChatbotService {
             return new ResponseBot(texto, botones);
         }
 
+        // ✅ ESPERANDO COMPROBANTE DE DEVOLUCIÓN (SOBRANTE) — VA PRIMERO
+        if (sesion.isEsperandoComprobanteDevolucion()) {
+            botones.add(ResponseBot.fila(
+                    ResponseBot.boton("📎 Subir comprobante de depósito", "subir_comprobante")
+            ));
+            botones.add(ResponseBot.fila(
+                    ResponseBot.boton("❌ Cancelar operación", "cancelar")
+            ));
+            return new ResponseBot(texto, botones);
+        }
+
+        // Formulario de solicitud confirmado
         if (texto != null && texto.contains("¿Los datos son correctos?")
                 && teniaFormularioSolicitud) {
             botones.add(ResponseBot.fila(
@@ -289,11 +301,23 @@ public class ChatbotService {
             return new ResponseBot(texto, botones);
         }
 
+        // Resumen de liquidación (solo si NO está esperando comprobante)
         if (texto != null && texto.contains("¿Confirmas la liquidación?")
                 && estabaSubiendoFacturas) {
             botones.add(ResponseBot.fila(
                     ResponseBot.boton("✅ Sí, continuar", "1"),
                     ResponseBot.boton("❌ No, corregir", "2")
+            ));
+            return new ResponseBot(texto, botones);
+        }
+
+        // Si el texto contiene "sube el comprobante", mostramos botón
+        if (texto != null && texto.contains("sube el comprobante")) {
+            botones.add(ResponseBot.fila(
+                    ResponseBot.boton("📎 Subir comprobante de depósito", "subir_comprobante")
+            ));
+            botones.add(ResponseBot.fila(
+                    ResponseBot.boton("❌ Cancelar operación", "cancelar")
             ));
             return new ResponseBot(texto, botones);
         }
@@ -338,7 +362,7 @@ public class ChatbotService {
     }
 
     // ============================================================
-    // DETERMINAR BOTONES SEGÚN ESTADO
+    // DETERMINAR BOTONES
     // ============================================================
     private List<List<ResponseBot.Boton>> determinarBotones(SesionUsuario sesion) {
         List<List<ResponseBot.Boton>> botones = new ArrayList<>();
@@ -362,8 +386,20 @@ public class ChatbotService {
         if (sesion.isAutenticado()) {
             String rol = sesion.getRolNombre();
 
-            // DOCENTE CON FORMULARIO SUBIDO
-            if (rol != null && rol.equalsIgnoreCase("Docente")
+            // ✅ FUNCIONARIO ESPERANDO COMPROBANTE DE DEVOLUCIÓN — VA PRIMERO
+            if (rol != null && rol.equalsIgnoreCase("Funcionario")
+                    && sesion.isEsperandoComprobanteDevolucion()) {
+                botones.add(ResponseBot.fila(
+                        ResponseBot.boton("📎 Subir comprobante de depósito", "subir_comprobante")
+                ));
+                botones.add(ResponseBot.fila(
+                        ResponseBot.boton("❌ Cancelar operación", "cancelar")
+                ));
+                return botones;
+            }
+
+            // Funcionario con formulario de solicitud
+            if (rol != null && rol.equalsIgnoreCase("Funcionario")
                     && "SOLICITAR".equals(sesion.getAccionPendiente())
                     && sesion.getFormularioSolicitud() != null) {
                 botones.add(ResponseBot.fila(
@@ -373,7 +409,7 @@ public class ChatbotService {
                 return botones;
             }
 
-            if (rol != null && rol.equalsIgnoreCase("Docente")
+            if (rol != null && rol.equalsIgnoreCase("Funcionario")
                     && "LIQUIDAR".equals(sesion.getAccionPendiente())
                     && sesion.getFormularioLiquidacion() != null
                     && !sesion.isSubiendoFacturas()) {
@@ -384,8 +420,8 @@ public class ChatbotService {
                 return botones;
             }
 
-            // DOCENTE EN MENÚ PRINCIPAL
-            if (rol != null && rol.equalsIgnoreCase("Docente")
+            // Funcionario en menú principal
+            if (rol != null && rol.equalsIgnoreCase("Funcionario")
                     && sesion.getAccionPendiente() == null) {
                 botones.add(ResponseBot.fila(
                         ResponseBot.boton("📝 Solicitar anticipo", "1"),
@@ -401,8 +437,8 @@ public class ChatbotService {
                 return botones;
             }
 
-            // DOCENTE SUBIENDO FACTURAS
-            if (rol != null && rol.equalsIgnoreCase("Docente")
+            // Funcionario subiendo facturas
+            if (rol != null && rol.equalsIgnoreCase("Funcionario")
                     && sesion.isSubiendoFacturas()) {
                 botones.add(ResponseBot.fila(
                         ResponseBot.boton("✅ Terminar y calcular saldo", "listo")
@@ -413,20 +449,8 @@ public class ChatbotService {
                 return botones;
             }
 
-            // DOCENTE CON DEVOLUCIÓN PENDIENTE
-            if (rol != null && rol.equalsIgnoreCase("Docente")
-                    && "DEVOLUCION".equals(sesion.getAccionPendiente())) {
-                botones.add(ResponseBot.fila(
-                        ResponseBot.boton("📎 Subir comprobante", "subir_comprobante")
-                ));
-                botones.add(ResponseBot.fila(
-                        ResponseBot.boton("❌ Cancelar", "cancelar")
-                ));
-                return botones;
-            }
-
-// DOCENTE EN OPERACIÓN (esperando PDF)
-            if (rol != null && rol.equalsIgnoreCase("Docente")
+            // Funcionario en operación (esperando PDF)
+            if (rol != null && rol.equalsIgnoreCase("Funcionario")
                     && sesion.getAccionPendiente() != null) {
                 botones.add(ResponseBot.fila(
                         ResponseBot.boton("❌ Cancelar operación", "cancelar")
@@ -434,7 +458,7 @@ public class ChatbotService {
                 return botones;
             }
 
-            // APROBADORES EN MENÚ
+            // Aprobadores en menú
             if (rol != null && (rol.equalsIgnoreCase("Jefe Inmediato")
                     || rol.equalsIgnoreCase("Director Financiero")
                     || rol.equalsIgnoreCase("Contadora")
@@ -442,9 +466,35 @@ public class ChatbotService {
                     || rol.equalsIgnoreCase("Asistente Contable"))
                     && sesion.getTramiteEnRevision() == null
                     && !sesion.isEsperandoMotivoRechazo()) {
+
+                // Botón general para todos los aprobadores
                 botones.add(ResponseBot.fila(
                         ResponseBot.boton("📋 Ver pendientes", "pendientes")
                 ));
+
+                // ✅ Botones específicos de la Contadora
+                if (rol.equalsIgnoreCase("Contadora")) {
+                    botones.add(ResponseBot.fila(
+                            ResponseBot.boton("🔍 Validar devoluciones", "validar devoluciones")
+                    ));
+                    botones.add(ResponseBot.fila(
+                            ResponseBot.boton("💰 Reembolsos autorizados", "reembolsos")
+                    ));
+                    botones.add(ResponseBot.fila(
+                            ResponseBot.boton("📄 Registrar comprobante", "pendientes")
+                    ));
+                }
+
+                // ✅ Botones específicos del Director Financiero
+                if (rol.equalsIgnoreCase("Director Financiero")) {
+                    botones.add(ResponseBot.fila(
+                            ResponseBot.boton("📋 Ver órdenes", "ordenes")
+                    ));
+                    botones.add(ResponseBot.fila(
+                            ResponseBot.boton("💰 Autorizar reembolsos", "reembolsos")
+                    ));
+                }
+
                 botones.add(ResponseBot.fila(
                         ResponseBot.boton("❓ Ayuda", "5"),
                         ResponseBot.boton("🚪 Cerrar sesión", "cerrar_sesion_confirmar")
@@ -452,12 +502,12 @@ public class ChatbotService {
                 return botones;
             }
 
-            // REVISANDO UN TRÁMITE — botones según el rol
+            // Revisando un trámite
             if (sesion.getTramiteEnRevision() != null && !sesion.isEsperandoMotivoRechazo()) {
 
                 if (rol != null && rol.equalsIgnoreCase("Colectora")) {
                     botones.add(ResponseBot.fila(
-                            ResponseBot.boton("💸 Registrar transferencia", "confirmar transferencia")
+                            ResponseBot.boton("📄 Generar orden", "generar orden")
                     ));
                     botones.add(ResponseBot.fila(
                             ResponseBot.boton("🏠 Menú principal", "menu")
@@ -468,12 +518,32 @@ public class ChatbotService {
                 if (rol != null && rol.equalsIgnoreCase("Asistente Contable")) {
                     botones.add(ResponseBot.fila(
                             ResponseBot.boton("📤 Enviar a Contadora", "enviar"),
-                            ResponseBot.boton("↩️ Devolver al docente", "devolver")
+                            ResponseBot.boton("↩️ Devolver al funcionario", "devolver")
                     ));
                     botones.add(ResponseBot.fila(
                             ResponseBot.boton("🏠 Menú principal", "menu")
                     ));
                     return botones;
+                }
+
+                if (rol != null && rol.equalsIgnoreCase("Contadora")) {
+                    Optional<DevolucionResponseDTO> devolucionOpt =
+                            devolucionService.buscarPorTramite(sesion.getTramiteEnRevision());
+
+                    if (devolucionOpt.isPresent()
+                            && "Comprobante subido".equals(devolucionOpt.get().getEstado())) {
+                        Long devolucionId = devolucionOpt.get().getDevolucionId();
+                        botones.add(ResponseBot.fila(
+                                ResponseBot.boton("✅ Validar devolución",
+                                        "validar devolucion " + devolucionId),
+                                ResponseBot.boton("❌ Rechazar devolución",
+                                        "rechazar devolucion " + devolucionId)
+                        ));
+                        botones.add(ResponseBot.fila(
+                                ResponseBot.boton("🏠 Menú principal", "menu")
+                        ));
+                        return botones;
+                    }
                 }
 
                 botones.add(ResponseBot.fila(
@@ -491,7 +561,7 @@ public class ChatbotService {
     }
 
     // ============================================================
-    // CONFIRMACIÓN DE CANCELACIÓN DE OPERACIÓN
+    // CONFIRMACIÓN DE CANCELACIÓN
     // ============================================================
     private String procesarConfirmacionCancelacion(String mensajeLower, SesionUsuario sesion) {
         if (esComando(mensajeLower, "1", "si", "sí", "s", "yes", "confirmar", "confirmo")) {
@@ -535,7 +605,12 @@ public class ChatbotService {
         String accion = sesion.getAccionPendiente();
         String rol = sesion.getRolNombre();
 
-        if (rol.equalsIgnoreCase("Docente")) {
+        if (rol != null && rol.equalsIgnoreCase("Funcionario")) {
+            if (sesion.isEsperandoComprobanteDevolucion()) {
+                return "ℹ️ *Ayuda — Comprobante de devolución*\n\n" +
+                        "📌 Estás en el caso SOBRANTE.\n\n" +
+                        "👉 Sube el comprobante de depósito en PDF para continuar.";
+            }
             if ("SOLICITAR".equals(accion) && sesion.getFormularioSolicitud() == null) {
                 return "ℹ️ *Ayuda — Esperando formulario*\n\n" +
                         "📌 En este momento necesitas enviar el formulario de solicitud de anticipo.\n\n" +
@@ -558,12 +633,7 @@ public class ChatbotService {
                         "✅ Cuando termines, escribe *listo*.\n\n" +
                         "📊 Llevas *" + sesion.getFacturasExtraidas().size() + "* facturas registradas.";
             }
-            if ("DEVOLUCION".equals(accion)) {
-                return "ℹ️ *Ayuda — Devolución*\n\n" +
-                        "📌 Estás registrando una devolución.\n\n" +
-                        "👉 Sube el comprobante de depósito en PDF.";
-            }
-            return "ℹ️ *Ayuda — Docente*\n\n" +
+            return "ℹ️ *Ayuda — Funcionario*\n\n" +
                     "Puedo ayudarte con:\n" +
                     "📝 Solicitar un anticipo\n" +
                     "💰 Liquidar un anticipo\n" +
@@ -610,8 +680,8 @@ public class ChatbotService {
         sesion.setProcesandoDocumento(true);
 
         try {
-            if (sesion.getRolNombre().equalsIgnoreCase("Docente")) {
-                return docenteChatService.procesarDocumento(archivo, sesion);
+            if (sesion.getRolNombre().equalsIgnoreCase("Funcionario")) {
+                return funcionarioChatService.procesarDocumento(archivo, sesion);
             }
             return "ℹ️ Tu rol no permite subir documentos.";
         } finally {
@@ -638,11 +708,10 @@ public class ChatbotService {
         sesion.setTramiteEnRevision(null);
         sesion.setEsperandoMotivoRechazo(false);
         sesion.setEsperandoConfirmacionCancelacion(false);
+        sesion.setEsperandoComprobanteDevolucion(false);
+        sesion.setMontoDevolucionPendiente(null);
     }
 
-    // ============================================================
-    // MENÚ PRINCIPAL
-    // ============================================================
     private String menuPrincipal(SesionUsuario sesion) {
         return "¿Qué necesitas hacer hoy?";
     }
@@ -663,6 +732,7 @@ public class ChatbotService {
                         || mensajeLower.equals("listo") || mensajeLower.equals("1")
                         || mensajeLower.equals("2") || mensajeLower.equals("3")
                         || mensajeLower.equals("4") || mensajeLower.equals("5")
+                        || mensajeLower.equals("subir_comprobante")
                         || mensajeLower.contains("ayuda")
                         || mensajeLower.contains("opciones") || mensajeLower.contains("menu")
                         || mensajeLower.contains("menú") || mensajeLower.contains("cancelar");
@@ -683,10 +753,6 @@ public class ChatbotService {
                                 return "⚠️ El archivo enviado no es un PDF.\n\n" +
                                         "📌 En este paso necesito el formulario de liquidación.\n\n" +
                                         "👉 Adjúntalo nuevamente en formato PDF.";
-                            case "FACTURAS":
-                                return "⚠️ El archivo enviado no es un PDF.\n\n" +
-                                        "📌 En este paso necesito las facturas.\n\n" +
-                                        "👉 Adjúntalas nuevamente en formato PDF.";
                             case "DEVOLUCION":
                                 return "⚠️ El archivo enviado no es un PDF.\n\n" +
                                         "📌 En este paso necesito el comprobante de devolución.\n\n" +
@@ -697,15 +763,17 @@ public class ChatbotService {
             }
         }
 
-        if (rol.equalsIgnoreCase("Docente")) {
-            String respuesta = docenteChatService.procesar(mensaje, mensajeLower, sesion);
+        if (rol.equalsIgnoreCase("Funcionario")) {
+            String respuesta = funcionarioChatService.procesar(mensaje, mensajeLower, sesion);
             if (respuesta != null) return respuesta;
         }
 
         if (rol.equalsIgnoreCase("Jefe Inmediato")) {
             ConfiguracionAprobador config = new ConfiguracionAprobador(
                     "Pendiente", "Aprobado por Jefe",
-                    "carlos.ruiz@iti.edu.ec", "Jefe", "juan.perez@iti.edu.ec",
+                    usuarioService.obtenerCorreoPorRol("Director Financiero"),
+                    "Jefe",
+                    null,
                     "Director Financiero");
 
             String respuesta = aprobadorChatService.procesar(mensaje, mensajeLower, sesion, config);
@@ -715,7 +783,9 @@ public class ChatbotService {
         if (rol.equalsIgnoreCase("Director Financiero")) {
             ConfiguracionAprobador config = new ConfiguracionAprobador(
                     "Aprobado por Jefe", "Aprobado por Director",
-                    "ana.torres@iti.edu.ec", "Director", "juan.perez@iti.edu.ec",
+                    usuarioService.obtenerCorreoPorRol("Contadora"),
+                    "Director",
+                    null,
                     "Contadora");
 
             String respuesta = aprobadorChatService.procesar(mensaje, mensajeLower, sesion, config);
@@ -752,7 +822,7 @@ public class ChatbotService {
     // ============================================================
     // LOGIN
     // ============================================================
-    private String manejarLogin(String mensaje, String mensajeLower, SesionUsuario sesion) {
+    private String manejarLogin(String mensaje, String mensajeLower, SesionUsuario sesion, Long chatId) {
 
         if (!sesion.isEsperandoContrasena()) {
             String correo = mensaje.trim();
@@ -801,10 +871,18 @@ public class ChatbotService {
             sesion.setAutenticado(true);
             sesion.setEsperandoContrasena(false);
 
+            try {
+                if (chatId != null) {
+                    usuarioService.actualizarTelegramChatId(response.getUsuarioId(), chatId.toString());
+                    System.out.println("ChatId de Telegram guardado: " + chatId + " para usuario " + response.getNombre());
+                }
+            } catch (Exception e) {
+                System.err.println("No se pudo guardar el chatId de Telegram: " + e.getMessage());
+            }
+
             String bienvenida = "👋 Hola *" + response.getNombre() + "*. Soy ITI, tu asistente virtual.\n\n";
 
-            // ✅ Si es Docente, verificar si tiene devoluciones pendientes
-            if (response.getRolNombre().equalsIgnoreCase("Docente")) {
+            if (response.getRolNombre().equalsIgnoreCase("Funcionario")) {
                 String avisoDevolucion = verificarDevolucionPendiente(response.getUsuarioId(), sesion);
                 if (avisoDevolucion != null) {
                     return bienvenida + avisoDevolucion;
@@ -829,7 +907,7 @@ public class ChatbotService {
     }
 
     // ============================================================
-    // MENSAJE FUERA DE ALCANCE SEGÚN ROL
+    // MENSAJE FUERA DE ALCANCE
     // ============================================================
     private String mensajeFueraDeAlcance(SesionUsuario sesion) {
         String rol = sesion.getRolNombre();
@@ -839,7 +917,7 @@ public class ChatbotService {
                     "📌 Soy un asistente especializado en la gestión de anticipos del ITI.";
         }
 
-        if (rol.equalsIgnoreCase("Docente")) {
+        if (rol.equalsIgnoreCase("Funcionario")) {
             return "🤔 Esa pregunta está fuera de mi alcance.\n\n" +
                     "📌 Soy un asistente especializado en la gestión de anticipos del ITI.\n\n" +
                     "Puedo ayudarte con:\n" +
@@ -863,7 +941,8 @@ public class ChatbotService {
                     "📌 Soy un asistente especializado en la gestión de anticipos del ITI.\n\n" +
                     "Puedo ayudarte con:\n" +
                     "📋 Revisar solicitudes y liquidaciones\n" +
-                    "✅ Aprobar o rechazar trámites\n\n" +
+                    "✅ Aprobar o rechazar trámites\n" +
+                    "🔍 Validar devoluciones\n\n" +
                     "👉 Usa los botones para continuar.";
         }
 
@@ -896,8 +975,8 @@ public class ChatbotService {
     }
 
     // ============================================================
-// VERIFICAR DEVOLUCIÓN PENDIENTE
-// ============================================================
+    // VERIFICAR DEVOLUCIÓN PENDIENTE
+    // ============================================================
     private String verificarDevolucionPendiente(Long usuarioId, SesionUsuario sesion) {
         try {
             Optional<DevolucionResponseDTO> devolucionOpt = devolucionService.buscarPendientePorUsuario(usuarioId);
@@ -905,7 +984,6 @@ public class ChatbotService {
             if (devolucionOpt.isPresent()) {
                 DevolucionResponseDTO devolucion = devolucionOpt.get();
 
-                // Activar el modo DEVOLUCION en la sesión
                 sesion.setAccionPendiente("DEVOLUCION");
 
                 return "⚠️ *Tienes una devolución pendiente*\n\n" +

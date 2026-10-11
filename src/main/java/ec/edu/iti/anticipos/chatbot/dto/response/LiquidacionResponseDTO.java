@@ -6,6 +6,7 @@ import java.time.LocalDate;
 
 /**
  * DTO para devolver datos de una liquidación al cliente.
+ * Incluye el tipo de caso: SOBRANTE, FALTANTE o EXACTO.
  */
 @Data
 public class LiquidacionResponseDTO {
@@ -14,4 +15,5 @@ public class LiquidacionResponseDTO {
     private BigDecimal totalGastado;
     private BigDecimal saldo;
     private LocalDate fechaPresentacion;
+    private String tipoCaso;
 }

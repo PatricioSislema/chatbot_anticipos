@@ -7,6 +7,7 @@ import ec.edu.iti.anticipos.chatbot.dto.response.TramiteResponseDTO;
 import ec.edu.iti.anticipos.chatbot.service.HistorialEstadoService;
 import ec.edu.iti.anticipos.chatbot.service.NotificacionService;
 import ec.edu.iti.anticipos.chatbot.service.TramiteService;
+import ec.edu.iti.anticipos.chatbot.service.UsuarioService;
 import ec.edu.iti.anticipos.chatbot.sesion.SesionUsuario;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -16,8 +17,8 @@ import java.util.Optional;
 
 /**
  * Servicio especializado en la lógica del Asistente Contable.
- * Revisa las liquidaciones enviadas por el docente y las deriva a la Contadora
- * o las devuelve al docente con observaciones.
+ * Revisa las liquidaciones enviadas por el funcionario y las deriva a la Contadora
+ * o las devuelve al funcionario con observaciones.
  */
 @Service
 @RequiredArgsConstructor
@@ -26,19 +27,18 @@ public class AsistenteContableChatService {
     private final TramiteService tramiteService;
     private final NotificacionService notificacionService;
     private final HistorialEstadoService historialEstadoService;
+    private final UsuarioService usuarioService;
 
     public String procesar(String mensaje, String mensajeLower, SesionUsuario sesion) {
 
         if (sesion.isEsperandoMotivoRechazo()) {
-            return devolverAlDocente(mensaje, sesion);
+            return devolverAlFuncionario(mensaje, sesion);
         }
 
-        // Aceptar "seleccionar ID"
         if (mensajeLower.matches("seleccionar\\s+\\d+")) {
             return seleccionarLiquidacion(mensaje, sesion);
         }
 
-        // Aceptar solo el número
         if (mensajeLower.matches("\\d+")) {
             return seleccionarLiquidacionPorId(Long.parseLong(mensajeLower), sesion);
         }
@@ -96,7 +96,7 @@ public class AsistenteContableChatService {
 
         StringBuilder sb = new StringBuilder();
         sb.append("📋 *Liquidación #").append(d.getTramiteId()).append("*\n\n");
-        sb.append("👤 Docente: ").append(d.getNombreUsuario()).append("\n");
+        sb.append("👤 Funcionario: ").append(d.getNombreUsuario()).append("\n");
         sb.append("📝 Tipo: ").append(d.getNombreTipoTramite()).append("\n");
         sb.append("📅 Fecha: ").append(d.getFechaCreacion()).append("\n");
         sb.append("📊 Estado: ").append(d.getEstado()).append("\n");
@@ -108,7 +108,6 @@ public class AsistenteContableChatService {
             }
         }
 
-        // Datos de la solicitud original (si están disponibles)
         if (d.getPresupuesto() != null) {
             sb.append("\n💰 Anticipo original: $").append(d.getPresupuesto()).append("\n");
         }
@@ -127,7 +126,7 @@ public class AsistenteContableChatService {
 
         sb.append("\n¿Qué quieres hacer?\n\n");
         sb.append("• *enviar* → derivar a la Contadora\n");
-        sb.append("• *devolver* → regresar al docente con observaciones");
+        sb.append("• *devolver* → regresar al funcionario con observaciones");
         return sb.toString();
     }
 
@@ -147,11 +146,17 @@ public class AsistenteContableChatService {
         historialDTO.setObservacion("Revisado por el Asistente Contable");
         historialEstadoService.guardar(historialDTO);
 
-        NotificacionRequestDTO notifDTO = new NotificacionRequestDTO();
-        notifDTO.setTramiteId(tramiteId);
-        notifDTO.setDestinatario("ana.torres@iti.edu.ec");
-        notifDTO.setTipo("Liquidación pendiente de aprobación");
-        notificacionService.guardar(notifDTO);
+        // ✅ NOTIFICAR A LA CONTADORA (dinámico)
+        String correoContadora = usuarioService.obtenerCorreoPorRol("Contadora");
+        if (correoContadora == null) {
+            System.err.println("⚠️ No se encontró una Contadora en la BD.");
+        } else {
+            NotificacionRequestDTO notifDTO = new NotificacionRequestDTO();
+            notifDTO.setTramiteId(tramiteId);
+            notifDTO.setDestinatario(correoContadora);
+            notifDTO.setTipo("Liquidación pendiente de aprobación");
+            notificacionService.guardar(notifDTO);
+        }
 
         sesion.setTramiteEnRevision(null);
 
@@ -164,35 +169,44 @@ public class AsistenteContableChatService {
             return "⚠️ No has seleccionado ninguna liquidación.";
         }
         sesion.setEsperandoMotivoRechazo(true);
-        return "✍️ ¿Cuál es la observación para devolver la liquidación al docente?";
+        return "✍️ ¿Cuál es la observación para devolver la liquidación al funcionario?";
     }
 
-    private String devolverAlDocente(String observacion, SesionUsuario sesion) {
+    private String devolverAlFuncionario(String observacion, SesionUsuario sesion) {
         sesion.setMotivoRechazo(observacion);
         sesion.setEsperandoMotivoRechazo(false);
 
         Long tramiteId = sesion.getTramiteEnRevision();
-        tramiteService.actualizarEstado(tramiteId, "Devuelto al docente");
+        tramiteService.actualizarEstado(tramiteId, "Devuelto al funcionario");
 
         HistorialEstadoRequestDTO historialDTO = new HistorialEstadoRequestDTO();
         historialDTO.setTramiteId(tramiteId);
         historialDTO.setEstadoAnterior("Liquidación en proceso");
-        historialDTO.setEstadoNuevo("Devuelto al docente");
+        historialDTO.setEstadoNuevo("Devuelto al funcionario");
         historialDTO.setUsuarioId(sesion.getUsuarioId());
         historialDTO.setObservacion("Devuelto por el Asistente Contable: " + observacion);
         historialEstadoService.guardar(historialDTO);
 
-        NotificacionRequestDTO notifDTO = new NotificacionRequestDTO();
-        notifDTO.setTramiteId(tramiteId);
-        notifDTO.setDestinatario("juan.perez@iti.edu.ec");
-        notifDTO.setTipo("Liquidación devuelta para corrección");
-        notificacionService.guardar(notifDTO);
+        // ✅ NOTIFICAR AL FUNCIONARIO ORIGINAL (dinámico)
+        String correoFuncionario = tramiteService.obtenerDetalle(tramiteId)
+                .map(TramiteDetalleDTO::getCorreoUsuario)
+                .orElse(null);
+
+        if (correoFuncionario == null) {
+            System.err.println("⚠️ No se encontró el correo del funcionario del trámite " + tramiteId);
+        } else {
+            NotificacionRequestDTO notifDTO = new NotificacionRequestDTO();
+            notifDTO.setTramiteId(tramiteId);
+            notifDTO.setDestinatario(correoFuncionario);
+            notifDTO.setTipo("Liquidación devuelta para corrección");
+            notificacionService.guardar(notifDTO);
+        }
 
         sesion.setTramiteEnRevision(null);
         sesion.setMotivoRechazo(null);
 
-        return "↩️ Liquidación *" + tramiteId + "* devuelta al docente.\n\n" +
+        return "↩️ Liquidación *" + tramiteId + "* devuelta al funcionario.\n\n" +
                 "📌 Observación: " + observacion + "\n\n" +
-                "📬 Se ha notificado al *Docente*.";
+                "📬 Se ha notificado al *Funcionario*.";
     }
 }

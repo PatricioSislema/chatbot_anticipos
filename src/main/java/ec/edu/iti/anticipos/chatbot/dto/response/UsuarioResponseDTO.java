@@ -5,6 +5,8 @@ import lombok.Data;
 /**
  * DTO para devolver datos de un usuario al cliente.
  * No se incluye la contraseña por motivo de seguridad.
+ * Incluye el estado de bloqueo, el contador de intentos fallidos
+ * y el chat_id de Telegram.
  */
 @Data
 public class UsuarioResponseDTO {
@@ -13,4 +15,7 @@ public class UsuarioResponseDTO {
     private String nombre;
     private String correo;
     private String rolNombre;
+    private Boolean bloqueado;
+    private Integer intentosFallidos;
+    private String telegramChatId;
 }

@@ -2,21 +2,26 @@ package ec.edu.iti.anticipos.chatbot.service.chat;
 
 import ec.edu.iti.anticipos.chatbot.dto.request.HistorialEstadoRequestDTO;
 import ec.edu.iti.anticipos.chatbot.dto.request.NotificacionRequestDTO;
+import ec.edu.iti.anticipos.chatbot.dto.request.OrdenTransferenciaRequestDTO;
+import ec.edu.iti.anticipos.chatbot.dto.response.OrdenTransferenciaResponseDTO;
+import ec.edu.iti.anticipos.chatbot.dto.response.ReembolsoResponseDTO;
 import ec.edu.iti.anticipos.chatbot.dto.response.TramiteDetalleDTO;
 import ec.edu.iti.anticipos.chatbot.dto.response.TramiteResponseDTO;
-import ec.edu.iti.anticipos.chatbot.service.HistorialEstadoService;
-import ec.edu.iti.anticipos.chatbot.service.NotificacionService;
-import ec.edu.iti.anticipos.chatbot.service.TramiteService;
+import ec.edu.iti.anticipos.chatbot.service.*;
 import ec.edu.iti.anticipos.chatbot.sesion.SesionUsuario;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 
 /**
  * Servicio común para los roles aprobadores: Jefe, Director y Contadora.
- * La lógica es idéntica, solo cambia la configuración (estados, destinatarios).
+ *
+ * ⚠️ ADEMÁS, el Director Financiero puede:
+ *  - Aprobar órdenes de transferencia (anticipos).
+ *  - AUTORIZAR REEMBOLSOS (caso FALTANTE).
  */
 @Service
 @RequiredArgsConstructor
@@ -25,23 +30,64 @@ public class AprobadorChatService {
     private final TramiteService tramiteService;
     private final NotificacionService notificacionService;
     private final HistorialEstadoService historialEstadoService;
+    private final OrdenTransferenciaService ordenTransferenciaService;
+    private final ReembolsoService reembolsoService;
+    private final UsuarioService usuarioService;
 
     private static final int MAX_PROPOSITO = 30;
 
-    // Procesa los mensajes del aprobador
+    // ============================================================
+    // PROCESAR MENSAJE
+    // ============================================================
     public String procesar(String mensaje, String mensajeLower, SesionUsuario sesion,
                            ConfiguracionAprobador config) {
+
+        // ============================================================
+        // REEMBOLSOS (solo Director Financiero)
+        // ============================================================
+
+        // Autorizar reembolso específico: "autorizar reembolso 5"
+        if (mensajeLower.matches("autorizar\\s+reembolso\\s+\\d+")) {
+            Long reembolsoId = Long.parseLong(mensajeLower.replaceAll("[^0-9]", ""));
+            return autorizarReembolso(reembolsoId, sesion);
+        }
+
+        // Listar reembolsos pendientes: "reembolsos"
+        if (sesion.getRolNombre() != null
+                && sesion.getRolNombre().equalsIgnoreCase("Director Financiero")
+                && (mensajeLower.equals("reembolsos") || mensajeLower.equals("reembolso"))) {
+            return listarReembolsosPendientes();
+        }
+
+        // ============================================================
+        // ÓRDENES DE TRANSFERENCIA (solo Director Financiero)
+        // ============================================================
+
+        // Aprobar orden de transferencia
+        if (mensajeLower.matches("aprobar\\s+orden\\s+\\d+")) {
+            Long ordenId = Long.parseLong(mensajeLower.replaceAll("[^0-9]", ""));
+            return aprobarOrden(ordenId, sesion);
+        }
+
+        // Listar órdenes pendientes
+        if (sesion.getRolNombre() != null
+                && sesion.getRolNombre().equalsIgnoreCase("Director Financiero")
+                && (mensajeLower.equals("ordenes") || mensajeLower.contains("orden"))) {
+            return listarOrdenesPendientes();
+        }
+
+        // ============================================================
+        // APROBACIÓN DE TRÁMITES (comportamiento original)
+        // ============================================================
 
         if (sesion.isEsperandoMotivoRechazo()) {
             return procesarMotivoRechazo(mensaje, sesion, config);
         }
 
-        // Aceptar "revisar ID"
         if (mensajeLower.matches("revisar\\s+\\d+")) {
             return seleccionarTramite(mensaje, sesion);
         }
 
-        // Aceptar solo el número (ej. "21")
         if (mensajeLower.matches("\\d+")) {
             return seleccionarTramitePorId(Long.parseLong(mensajeLower), sesion);
         }
@@ -61,7 +107,9 @@ public class AprobadorChatService {
         return null;
     }
 
-    // Lista los trámites pendientes con nombre + propósito truncado
+    // ============================================================
+    // LISTAR TRÁMITES PENDIENTES
+    // ============================================================
     private String listarPendientes(SesionUsuario sesion, ConfiguracionAprobador config) {
         List<TramiteResponseDTO> pendientes = tramiteService.listarPorEstado(config.getEstadoBuscado());
 
@@ -77,7 +125,6 @@ public class AprobadorChatService {
             lista.append("🆔 ").append(t.getTramiteId())
                     .append(" — ").append(t.getNombreUsuario());
 
-            // Agregar el propósito si existe
             Optional<TramiteDetalleDTO> detalleOpt = tramiteService.obtenerDetalle(t.getTramiteId());
             if (detalleOpt.isPresent() && detalleOpt.get().getProposito() != null) {
                 String proposito = detalleOpt.get().getProposito();
@@ -95,7 +142,9 @@ public class AprobadorChatService {
         return lista.toString();
     }
 
-    // Selecciona un trámite (versión vieja que recibe "revisar 15")
+    // ============================================================
+    // SELECCIONAR TRÁMITE
+    // ============================================================
     private String seleccionarTramite(String mensaje, SesionUsuario sesion) {
         try {
             Long tramiteId = Long.parseLong(mensaje.replaceAll("[^0-9]", ""));
@@ -107,7 +156,6 @@ public class AprobadorChatService {
         }
     }
 
-    // Selecciona un trámite por ID y muestra su detalle completo
     private String seleccionarTramitePorId(Long tramiteId, SesionUsuario sesion) {
         sesion.setTramiteEnRevision(tramiteId);
 
@@ -158,7 +206,9 @@ public class AprobadorChatService {
         return sb.toString();
     }
 
-    // Aprueba el trámite y notifica al rol específico
+    // ============================================================
+    // APROBAR TRÁMITE
+    // ============================================================
     private String aprobar(SesionUsuario sesion, ConfiguracionAprobador config) {
         if (sesion.getTramiteEnRevision() == null) {
             return "⚠️ No has seleccionado ningún trámite.\n\n" +
@@ -180,20 +230,28 @@ public class AprobadorChatService {
         historialDTO.setObservacion("Aprobado por " + config.getRolNombre());
         historialEstadoService.guardar(historialDTO);
 
-        NotificacionRequestDTO notifDTO = new NotificacionRequestDTO();
-        notifDTO.setTramiteId(tramiteId);
-        notifDTO.setDestinatario(config.getDestinatarioAprobacion());
-        notifDTO.setTipo("Trámite aprobado por " + config.getRolNombre());
-        notificacionService.guardar(notifDTO);
+        // NOTIFICAR AL SIGUIENTE ROL (dinámico)
+        String correoSiguiente = usuarioService.obtenerCorreoPorRol(config.getNombreSiguienteRol());
+
+        if (correoSiguiente == null) {
+            System.err.println("⚠️ No se encontró un usuario con el rol: " + config.getNombreSiguienteRol());
+        } else {
+            NotificacionRequestDTO notifDTO = new NotificacionRequestDTO();
+            notifDTO.setTramiteId(tramiteId);
+            notifDTO.setDestinatario(correoSiguiente);
+            notifDTO.setTipo("Trámite aprobado por " + config.getRolNombre());
+            notificacionService.guardar(notifDTO);
+        }
 
         sesion.setTramiteEnRevision(null);
 
-        // Mensaje con nombre del siguiente rol
         return "✅ Trámite *" + tramiteId + "* aprobado correctamente.\n\n" +
                 "📬 Se ha notificado al *" + config.getNombreSiguienteRol() + "*.";
     }
 
-    // Inicia el flujo de rechazo (pide motivo)
+    // ============================================================
+    // RECHAZAR TRÁMITE
+    // ============================================================
     private String iniciarRechazo(SesionUsuario sesion) {
         if (sesion.getTramiteEnRevision() == null) {
             return "⚠️ No has seleccionado ningún trámite.\n\n" +
@@ -202,10 +260,9 @@ public class AprobadorChatService {
         }
         sesion.setEsperandoMotivoRechazo(true);
         return "✍️ ¿Cuál es el motivo del rechazo?\n\n" +
-                "👉 Escribe el motivo y se enviará al docente.";
+                "👉 Escribe el motivo y se enviará al funcionario.";
     }
 
-    // Procesa el motivo del rechazo y rechaza el trámite
     private String procesarMotivoRechazo(String motivo, SesionUsuario sesion,
                                          ConfiguracionAprobador config) {
         sesion.setMotivoRechazo(motivo);
@@ -224,17 +281,164 @@ public class AprobadorChatService {
         historialDTO.setObservacion("Rechazado por " + config.getRolNombre() + ": " + motivo);
         historialEstadoService.guardar(historialDTO);
 
-        NotificacionRequestDTO notifDTO = new NotificacionRequestDTO();
-        notifDTO.setTramiteId(tramiteId);
-        notifDTO.setDestinatario(config.getDestinatarioRechazo());
-        notifDTO.setTipo("Trámite rechazado por " + config.getRolNombre());
-        notificacionService.guardar(notifDTO);
+        // NOTIFICAR AL FUNCIONARIO ORIGINAL (dinámico)
+        String correoFuncionario = tramiteService.obtenerDetalle(tramiteId)
+                .map(TramiteDetalleDTO::getCorreoUsuario)
+                .orElse(null);
+
+        if (correoFuncionario != null) {
+            NotificacionRequestDTO notifDTO = new NotificacionRequestDTO();
+            notifDTO.setTramiteId(tramiteId);
+            notifDTO.setDestinatario(correoFuncionario);
+            notifDTO.setTipo("Trámite rechazado por " + config.getRolNombre());
+            notificacionService.guardar(notifDTO);
+        }
 
         sesion.setTramiteEnRevision(null);
         sesion.setMotivoRechazo(null);
 
         return "❌ Trámite *" + tramiteId + "* rechazado.\n\n" +
                 "📌 Motivo: " + motivo + "\n\n" +
-                "📬 Se ha notificado al *Docente*.";
+                "📬 Se ha notificado al *Funcionario*.";
+    }
+
+    // ============================================================
+    // ÓRDENES DE TRANSFERENCIA
+    // ============================================================
+    private String listarOrdenesPendientes() {
+        List<OrdenTransferenciaResponseDTO> ordenes = ordenTransferenciaService.listarPorEstado("Generada");
+
+        if (ordenes.isEmpty()) {
+            return "📋 No hay órdenes de transferencia pendientes de aprobación.\n\n" +
+                    "👉 Escribe *menu* para volver al menú principal.";
+        }
+
+        StringBuilder lista = new StringBuilder("📋 *Órdenes de transferencia pendientes:* (" + ordenes.size() + ")\n\n");
+        for (OrdenTransferenciaResponseDTO o : ordenes) {
+            lista.append("🆔 Orden #").append(o.getOrdenId())
+                    .append(" — Trámite #").append(o.getTramiteId())
+                    .append(" — $").append(o.getValor())
+                    .append("\n");
+        }
+        lista.append("\n👉 Escribe *aprobar orden ID* para aprobar una orden.");
+        return lista.toString();
+    }
+
+    private String aprobarOrden(Long ordenId, SesionUsuario sesion) {
+        Optional<OrdenTransferenciaResponseDTO> ordenOpt = ordenTransferenciaService.buscarPorId(ordenId);
+        if (ordenOpt.isEmpty()) {
+            return "⚠️ No encontré la orden #" + ordenId + ".";
+        }
+
+        OrdenTransferenciaResponseDTO orden = ordenOpt.get();
+        if (!"Generada".equals(orden.getEstado())) {
+            return "⚠️ La orden no está pendiente de aprobación.";
+        }
+
+        OrdenTransferenciaRequestDTO ordenDTO = new OrdenTransferenciaRequestDTO();
+        ordenDTO.setTramiteId(orden.getTramiteId());
+        ordenDTO.setColectoraId(orden.getColectoraId());
+        ordenDTO.setDirectorId(sesion.getUsuarioId());
+        ordenDTO.setNumeroCuenta(orden.getNumeroCuenta());
+        ordenDTO.setValor(orden.getValor());
+        ordenDTO.setConcepto(orden.getConcepto());
+        ordenDTO.setFechaGeneracion(orden.getFechaGeneracion());
+        ordenDTO.setFechaAprobacion(LocalDate.now());
+        ordenDTO.setEstado("Aprobada");
+
+        ordenTransferenciaService.actualizar(ordenId, ordenDTO);
+
+        tramiteService.actualizarEstado(orden.getTramiteId(), "Orden aprobada");
+
+        HistorialEstadoRequestDTO historialDTO = new HistorialEstadoRequestDTO();
+        historialDTO.setTramiteId(orden.getTramiteId());
+        historialDTO.setEstadoAnterior("Orden generada");
+        historialDTO.setEstadoNuevo("Orden aprobada");
+        historialDTO.setUsuarioId(sesion.getUsuarioId());
+        historialDTO.setObservacion("Orden de transferencia #" + ordenId + " aprobada por el Director Financiero");
+        historialEstadoService.guardar(historialDTO);
+
+        // ✅ Notificar a COLECTORA y CONTADORA
+        String correoColectora = usuarioService.obtenerCorreoPorRol("Colectora");
+        if (correoColectora != null) {
+            NotificacionRequestDTO notifColectora = new NotificacionRequestDTO();
+            notifColectora.setTramiteId(orden.getTramiteId());
+            notifColectora.setDestinatario(correoColectora);
+            notifColectora.setTipo("Orden de transferencia aprobada");
+            notificacionService.guardar(notifColectora);
+        }
+
+        String correoContadora = usuarioService.obtenerCorreoPorRol("Contadora");
+        if (correoContadora != null) {
+            NotificacionRequestDTO notifContadora = new NotificacionRequestDTO();
+            notifContadora.setTramiteId(orden.getTramiteId());
+            notifContadora.setDestinatario(correoContadora);
+            notifContadora.setTipo("Orden aprobada - Registrar comprobante");
+            notificacionService.guardar(notifContadora);
+        }
+
+        return "✅ Orden #" + ordenId + " aprobada correctamente.\n\n" +
+                "📬 Se ha notificado a la *Colectora* y a la *Contadora*.\n\n" +
+                "📌 La *Contadora* debe registrar el comprobante con:\n" +
+                "*registrar comprobante " + orden.getTramiteId() + "*";
+    }
+
+    // ============================================================
+    // REEMBOLSOS (solo Director Financiero)
+    // ============================================================
+    private String listarReembolsosPendientes() {
+        List<ReembolsoResponseDTO> reembolsos = reembolsoService.listarPorEstado("Pendiente");
+
+        if (reembolsos.isEmpty()) {
+            return "📋 No hay reembolsos pendientes de autorización.\n\n" +
+                    "👉 Escribe *menu* para volver al menú principal.";
+        }
+
+        StringBuilder lista = new StringBuilder("📋 *Reembolsos pendientes de autorización:* (" + reembolsos.size() + ")\n\n");
+        for (ReembolsoResponseDTO r : reembolsos) {
+            lista.append("🆔 Reembolso #").append(r.getReembolsoId())
+                    .append(" — Trámite #").append(r.getTramiteId())
+                    .append(" — $").append(r.getMontoSolicitado())
+                    .append("\n");
+        }
+        lista.append("\n👉 Escribe *autorizar reembolso ID* para autorizar un reembolso.");
+        return lista.toString();
+    }
+
+    private String autorizarReembolso(Long reembolsoId, SesionUsuario sesion) {
+        try {
+            ReembolsoResponseDTO reembolso = reembolsoService.autorizar(
+                    reembolsoId, sesion.getUsuarioId(), "Autorizado por el Director Financiero");
+
+            Long tramiteId = reembolso.getTramiteId();
+
+            // Notificar a la Contadora para que informe a la Colectora
+            String correoContadora = usuarioService.obtenerCorreoPorRol("Contadora");
+            if (correoContadora != null) {
+                NotificacionRequestDTO notifDTO = new NotificacionRequestDTO();
+                notifDTO.setTramiteId(tramiteId);
+                notifDTO.setDestinatario(correoContadora);
+                notifDTO.setTipo("Reembolso autorizado - Informa a Colectora");
+                notificacionService.guardar(notifDTO);
+            }
+
+            // Historial
+            HistorialEstadoRequestDTO historialDTO = new HistorialEstadoRequestDTO();
+            historialDTO.setTramiteId(tramiteId);
+            historialDTO.setEstadoAnterior("Liquidación aprobada");
+            historialDTO.setEstadoNuevo("Reembolso autorizado");
+            historialDTO.setUsuarioId(sesion.getUsuarioId());
+            historialDTO.setObservacion("Reembolso #" + reembolsoId + " autorizado por el Director Financiero");
+            historialEstadoService.guardar(historialDTO);
+
+            return "✅ *Reembolso #" + reembolsoId + " autorizado.*\n\n" +
+                    "💰 Monto: $" + reembolso.getMontoSolicitado() + "\n" +
+                    "🆔 Trámite: #" + tramiteId + "\n\n" +
+                    "📬 Se ha notificado a la *Contadora* para que informe a la Colectora.\n\n" +
+                    "📌 La Contadora debe escribir *informar colectora " + tramiteId + "*.";
+        } catch (Exception e) {
+            return "⚠️ No se pudo autorizar el reembolso.\n\n" +
+                    "📌 Detalle: " + e.getMessage();
+        }
     }
 }

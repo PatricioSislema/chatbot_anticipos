@@ -5,6 +5,7 @@ import java.time.LocalDate;
 
 /**
  * DTO para devolver datos de una notificación al cliente.
+ * Incluye el canal: Correo, Telegram o Ambos.
  */
 @Data
 public class NotificacionResponseDTO {
@@ -14,4 +15,5 @@ public class NotificacionResponseDTO {
     private String tipo;
     private LocalDate fechaEnvio;
     private String estado;
+    private String canal;
 }

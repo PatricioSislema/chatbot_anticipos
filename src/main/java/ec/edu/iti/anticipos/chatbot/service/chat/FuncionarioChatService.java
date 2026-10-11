@@ -1,5 +1,6 @@
 package ec.edu.iti.anticipos.chatbot.service.chat;
 
+import ec.edu.iti.anticipos.chatbot.dto.ComprobanteExtraidoDTO;
 import ec.edu.iti.anticipos.chatbot.dto.request.FacturaRequestDTO;
 import ec.edu.iti.anticipos.chatbot.dto.request.HistorialEstadoRequestDTO;
 import ec.edu.iti.anticipos.chatbot.dto.request.LiquidacionRequestDTO;
@@ -14,6 +15,8 @@ import ec.edu.iti.anticipos.chatbot.service.LiquidacionService;
 import ec.edu.iti.anticipos.chatbot.service.NotificacionService;
 import ec.edu.iti.anticipos.chatbot.service.SolicitudService;
 import ec.edu.iti.anticipos.chatbot.service.TramiteService;
+import ec.edu.iti.anticipos.chatbot.service.UsuarioService;
+import ec.edu.iti.anticipos.chatbot.service.parser.ComprobanteParser;
 import ec.edu.iti.anticipos.chatbot.sesion.SesionUsuario;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -30,13 +33,27 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Servicio especializado en la lógica del Docente.
+ * Servicio especializado en la lógica del Funcionario.
  * Gestiona solicitudes, liquidaciones, subida de facturas y consultas de estado.
  * También se encarga de la validación de los formularios PDF.
+ *
+ * ⚠️ VALIDACIONES DE SEGURIDAD:
+ *  - El solicitante del formulario DEBE coincidir con el usuario logueado (nombre + cédula).
+ *  - Si no coincide, el formulario se rechaza para evitar que un funcionario suba
+ *    documentos a nombre de otro.
+ *
+ * ⚠️ FLUJO SOBRANTE:
+ *  - Si el saldo es > 0 (SOBRANTE), el bot pide el comprobante de depósito ANTES
+ *    de crear la liquidación. No se continúa hasta que el funcionario suba el comprobante.
+ *
+ * ⚠️ BYPASS AZURE DI:
+ *  - Si Azure DI no puede leer el comprobante (error 400 InvalidContent), el sistema
+ *    acepta el archivo y lo marca para validación manual de la Contadora.
+ *    NO bloquea al Funcionario.
  */
 @Service
 @RequiredArgsConstructor
-public class DocenteChatService {
+public class FuncionarioChatService {
 
     private final TramiteService tramiteService;
     private final TramiteRepository tramiteRepository;
@@ -47,12 +64,13 @@ public class DocenteChatService {
     private final LiquidacionService liquidacionService;
     private final FacturaService facturaService;
     private final DevolucionService devolucionService;
-
+    private final UsuarioService usuarioService;
+    private final ComprobanteParser comprobanteParser;
 
     // ==================== MENSAJES ====================
     public String procesar(String mensaje, String mensajeLower, SesionUsuario sesion) {
 
-        System.out.println("=== DOCENTE PROCESAR ===");
+        System.out.println("=== FUNCIONARIO PROCESAR ===");
         System.out.println("Mensaje: [" + mensaje + "]");
         System.out.println("AccionPendiente: [" + sesion.getAccionPendiente() + "]");
 
@@ -94,8 +112,12 @@ public class DocenteChatService {
                 sesion.getFacturasExtraidas().clear();
                 return "✅ Liquidación descartada.\n\n¿Qué necesitas hacer hoy?";
             }
-            // ✅ Si escribe "listo", mostrar el resumen de saldo
             if (mensajeLower.contains("listo")) {
+                if (sesion.getFacturasExtraidas() == null || sesion.getFacturasExtraidas().isEmpty()) {
+                    return "⚠️ *No has subido ninguna factura.*\n\n" +
+                            "📌 Para continuar necesitas subir al menos 1 factura en PDF.\n\n" +
+                            "👉 Adjúntala ahora.";
+                }
                 return calcularYMostrarSaldo(sesion);
             }
             return null;
@@ -105,14 +127,12 @@ public class DocenteChatService {
         // COMANDOS NORMALES
         // ============================================
 
-        // 1. SOLICITAR
         if (mensajeLower.contains("solicitar") || mensajeLower.contains("pedir")
                 || mensajeLower.contains("anticipo") || mensajeLower.contains("fondos")
                 || mensajeLower.contains("plata") || mensajeLower.contains("dinero")
                 || mensajeLower.contains("adelanto") || mensajeLower.contains("nueva solicitud")
                 || mensajeLower.equals("1")) {
 
-            // ✅ VALIDACIÓN: verificar si tiene liquidaciones pendientes
             if (tieneLiquidacionesPendientes(sesion.getUsuarioId())) {
                 return "⚠️ *No puedes solicitar un nuevo anticipo*\n\n" +
                         "📌 Tienes una liquidación pendiente de completar.\n\n" +
@@ -125,7 +145,6 @@ public class DocenteChatService {
             return "📎 Perfecto. Ahora adjunta el formulario de solicitud de anticipo en formato PDF, ya llenado y firmado.";
         }
 
-        // 2. LIQUIDAR
         if (mensajeLower.contains("liquidar") || mensajeLower.contains("rendir")
                 || mensajeLower.contains("justificar") || mensajeLower.contains("cuadrar")
                 || mensajeLower.equals("2")) {
@@ -134,14 +153,12 @@ public class DocenteChatService {
             return "📎 Perfecto. Ahora adjunta el formulario de liquidación en formato PDF.";
         }
 
-        // 3. CONSULTAR
         if (mensajeLower.contains("estado") || mensajeLower.contains("seguimiento")
                 || mensajeLower.contains("consultar") || mensajeLower.contains("tramite")
                 || mensajeLower.contains("trámite") || mensajeLower.equals("3")) {
             return consultarEstado(sesion);
         }
 
-        // 4. AYUDA
         if (mensajeLower.contains("ayuda") || mensajeLower.contains("opciones")
                 || mensajeLower.contains("puedo hacer") || mensajeLower.equals("4")) {
             return "ℹ️ Puedo ayudarte con:\n\n" +
@@ -151,12 +168,15 @@ public class DocenteChatService {
                     "4. Resolver dudas generales";
         }
 
-        // 5. LISTO (terminó de subir facturas)
         if (mensajeLower.contains("listo") && sesion.isSubiendoFacturas()) {
+            if (sesion.getFacturasExtraidas() == null || sesion.getFacturasExtraidas().isEmpty()) {
+                return "⚠️ *No has subido ninguna factura.*\n\n" +
+                        "📌 Para continuar necesitas subir al menos 1 factura en PDF.\n\n" +
+                        "👉 Adjúntala ahora.";
+            }
             return calcularYMostrarSaldo(sesion);
         }
 
-        // 6. DEVOLUCIÓN
         if (mensajeLower.contains("devolucion") || mensajeLower.contains("devolución")) {
             sesion.setAccionPendiente("DEVOLUCION");
             return "📎 Perfecto. Adjunta el comprobante de depósito de la devolución en formato PDF.";
@@ -173,20 +193,23 @@ public class DocenteChatService {
             String tipoContenido = archivo.getContentType();
 
             if (nombreArchivo == null || !nombreArchivo.toLowerCase().endsWith(".pdf")) {
-                return "⚠️ El archivo enviado no es un PDF.\n\n" +
-                        "📌 En este paso necesito un documento PDF.\n\n" +
-                        "👉 Adjúntalo nuevamente con la extensión .pdf";
+                return "⚠️ *Formato incorrecto.*\n\n" +
+                        "📌 Por favor, sube un archivo en formato PDF (.pdf).";
             }
 
             if (tipoContenido == null || !tipoContenido.contains("pdf")) {
-                return "⚠️ El archivo no parece ser un PDF válido.\n\n" +
-                        "📌 En este paso necesito un documento PDF.\n\n" +
-                        "👉 Verifica el archivo y vuelve a enviarlo.";
+                return "⚠️ *El archivo no parece ser un PDF válido.*\n\n" +
+                        "📌 Por favor, sube un archivo en formato PDF (.pdf).";
             }
 
             byte[] bytes = archivo.getBytes();
 
-            // FORMULARIO DE SOLICITUD
+            // ✅ COMPROBANTE DE DEVOLUCIÓN (SOBRANTE) — tiene prioridad
+            if (sesion.isEsperandoComprobanteDevolucion()) {
+                return procesarComprobanteDevolucion(archivo, sesion);
+            }
+
+            // ============ FORMULARIO DE SOLICITUD ============
             if ("SOLICITAR".equals(sesion.getAccionPendiente())) {
                 FormularioSolicitudDTO form = documentIntelligenceService.extraerFormularioSolicitud(bytes);
                 if (!form.isExtraccionExitosa()) {
@@ -199,6 +222,16 @@ public class DocenteChatService {
                     return "⚠️ El PDF no corresponde al formulario de solicitud de anticipo.\n\n" +
                             "📌 En este paso necesito el formato *FORMULARIO DE ANTICIPO DE FONDOS*.\n\n" +
                             "👉 Verifica el documento y vuelve a adjuntarlo.";
+                }
+
+                String errorSolicitante = validarSolicitante(form.getSolicitante(), form.getCi(), sesion);
+                if (errorSolicitante != null) {
+                    return errorSolicitante;
+                }
+
+                String errorBasico = validarCamposBasicosSolicitud(form);
+                if (errorBasico != null) {
+                    return errorBasico;
                 }
 
                 sesion.setFormularioSolicitud(form);
@@ -215,7 +248,7 @@ public class DocenteChatService {
                 return resumen.toString();
             }
 
-            // FORMULARIO DE LIQUIDACIÓN
+            // ============ FORMULARIO DE LIQUIDACIÓN ============
             if ("LIQUIDAR".equals(sesion.getAccionPendiente()) && !sesion.isSubiendoFacturas()) {
                 FormularioLiquidacionDTO form = documentIntelligenceService.extraerFormularioLiquidacion(bytes);
                 if (!form.isExtraccionExitosa()) {
@@ -228,6 +261,11 @@ public class DocenteChatService {
                     return "⚠️ El PDF no corresponde al formulario de liquidación.\n\n" +
                             "📌 En este paso necesito el formato *FORMATO DE LIQUIDACIÓN DE FONDOS*.\n\n" +
                             "👉 Verifica el documento y vuelve a adjuntarlo.";
+                }
+
+                String errorSolicitante = validarSolicitante(form.getSolicitante(), form.getCi(), sesion);
+                if (errorSolicitante != null) {
+                    return errorSolicitante;
                 }
 
                 String errorValidacion = validarFormularioLiquidacion(form, sesion);
@@ -246,7 +284,7 @@ public class DocenteChatService {
                         "✍️ Escribe *listo* cuando termines.";
             }
 
-            // FACTURAS
+            // ============ FACTURAS ============
             if ("LIQUIDAR".equals(sesion.getAccionPendiente()) && sesion.isSubiendoFacturas()) {
                 FacturaExtraidaDTO factura = documentIntelligenceService.extraerDatos(bytes);
 
@@ -260,6 +298,11 @@ public class DocenteChatService {
                     return "⚠️ El PDF no corresponde a una factura válida.\n\n" +
                             "📌 En este paso necesito una factura con RUC y monto.\n\n" +
                             "👉 Verifica el archivo y vuelve a enviarlo.";
+                }
+
+                String errorFactura = validarFactura(factura);
+                if (errorFactura != null) {
+                    return errorFactura;
                 }
 
                 FormularioLiquidacionDTO.LineaFactura linea = new FormularioLiquidacionDTO.LineaFactura();
@@ -277,7 +320,7 @@ public class DocenteChatService {
                         "📎 Sube otra factura o escribe *listo* para continuar.";
             }
 
-            // COMPROBANTE DE DEVOLUCIÓN
+            // ============ COMPROBANTE DE DEVOLUCIÓN (flujo antiguo) ============
             if ("DEVOLUCION".equals(sesion.getAccionPendiente())) {
                 Optional<DevolucionResponseDTO> devolucionOpt = devolucionService.buscarPendientePorUsuario(sesion.getUsuarioId());
 
@@ -304,7 +347,7 @@ public class DocenteChatService {
                 historialDTO.setEstadoAnterior("Liquidación aprobada");
                 historialDTO.setEstadoNuevo("Liquidación cerrada");
                 historialDTO.setUsuarioId(sesion.getUsuarioId());
-                historialDTO.setObservacion("Devolución registrada por el docente");
+                historialDTO.setObservacion("Devolución registrada por el funcionario");
                 historialEstadoService.guardar(historialDTO);
 
                 sesion.setAccionPendiente(null);
@@ -324,7 +367,155 @@ public class DocenteChatService {
         }
     }
 
-    // ==================== VALIDACIÓN ====================
+    // ==================== PROCESAR COMPROBANTE DE DEVOLUCIÓN (SOBRANTE) ====================
+
+    /**
+     * Procesa el comprobante de devolución que sube el Funcionario (caso SOBRANTE).
+     *
+     * ✅ INTENTA validar automáticamente con Azure DI + ComprobanteParser.
+     * ✅ BYPASS: Si Azure DI falla (400 InvalidContent), acepta el archivo
+     *    y lo marca para validación manual de la Contadora.
+     */
+    private String procesarComprobanteDevolucion(MultipartFile archivo, SesionUsuario sesion) {
+        String nombreArchivo = archivo.getOriginalFilename();
+
+        try {
+            if (nombreArchivo == null || !nombreArchivo.toLowerCase().endsWith(".pdf")) {
+                return "⚠️ El comprobante debe ser un PDF.\n\n" +
+                        "📌 En este paso necesito el comprobante de depósito.\n\n" +
+                        "👉 Adjúntalo nuevamente con la extensión .pdf";
+            }
+
+            String tipoContenido = archivo.getContentType();
+            if (tipoContenido == null || !tipoContenido.contains("pdf")) {
+                return "⚠️ El archivo no parece ser un PDF válido.\n\n" +
+                        "📌 En este paso necesito el comprobante de depósito.\n\n" +
+                        "👉 Verifica el archivo y vuelve a enviarlo.";
+            }
+
+            System.out.println(">>> ✅ Comprobante recibido: " + nombreArchivo);
+            System.out.println(">>> Monto pendiente: $" + sesion.getMontoDevolucionPendiente());
+
+            // ================================================================
+            // ✅ INTENTAR EXTRAER TEXTO DEL PDF Y VALIDARLO CON ComprobanteParser
+            // ================================================================
+            byte[] bytes = archivo.getBytes();
+            String texto = documentIntelligenceService.extraerTextoPlano(bytes);
+
+            BigDecimal saldoPendiente = sesion.getMontoDevolucionPendiente();
+            ComprobanteExtraidoDTO extraido = comprobanteParser.parsear(texto, saldoPendiente);
+
+            // Validación 1: ¿Es del ITI?
+            if (!extraido.isEsDelIti()) {
+                return "❌ *El comprobante no corresponde al ITI.*\n\n" +
+                        "📌 No se detectó el RUC 1792146836001 ni el nombre del Instituto.\n\n" +
+                        "👉 Sube el comprobante digital correcto (PDF de la banca en línea).";
+            }
+
+            // Validación 2: ¿Monto coincide? (si se encontró monto)
+            if (extraido.isMontoEncontrado() && !extraido.isMontoCoincide()) {
+                return String.format(
+                        "⚠️ *El monto del comprobante no coincide.*\n\n" +
+                                "📌 Comprobante: $%.2f\n" +
+                                "📌 Saldo pendiente: $%.2f\n\n" +
+                                "👉 Verifica que hayas subido el comprobante correcto.",
+                        extraido.getMontoDepositado(), saldoPendiente);
+            }
+
+            // Si no se encontró monto → se acepta, pero queda con observación.
+            // Si la fecha no es reciente → se acepta, pero queda con observación.
+
+            return crearLiquidacionYCerrar(sesion, nombreArchivo, extraido);
+
+        } catch (Exception e) {
+            System.err.println("Error al procesar comprobante con Azure DI: " + e.getMessage());
+
+            // ✅ BYPASS: Si Azure DI falla, aceptamos el comprobante para validación manual.
+            // No bloqueamos al Funcionario. La Contadora validará manualmente.
+            System.out.println(">>> ⚠️ Azure DI no pudo leer el comprobante. Se acepta para validación manual.");
+
+            return crearLiquidacionYCerrar(sesion, nombreArchivo, null);
+        }
+    }
+
+    // ==================== VALIDACIONES ====================
+
+    /**
+     * ✅ VALIDACIÓN DE SEGURIDAD:
+     * Verifica que el solicitante del formulario coincida con el usuario logueado.
+     * Compara nombre completo Y cédula.
+     */
+    private String validarSolicitante(String solicitanteForm, String ciForm, SesionUsuario sesion) {
+        if (solicitanteForm == null || solicitanteForm.trim().isEmpty()) {
+            return "⚠️ *No se pudo leer el nombre del solicitante en el formulario.*\n\n" +
+                    "📌 El PDF puede estar ilegible o tener un formato incorrecto.\n\n" +
+                    "👉 Verifica el documento y vuelve a enviarlo.";
+        }
+
+        if (solicitanteForm.trim().length() < 5) {
+            return "⚠️ *El nombre del solicitante es demasiado corto.*\n\n" +
+                    "📌 El formulario dice: *" + solicitanteForm + "*\n\n" +
+                    "👉 Verifica que sea el formato correcto.";
+        }
+
+        String solicitanteNorm = normalizar(solicitanteForm);
+        String nombreSesionNorm = normalizar(sesion.getNombre());
+
+        if (!solicitanteNorm.equals(nombreSesionNorm)) {
+            return "⚠️ *El formulario no está a tu nombre.*\n\n" +
+                    "📌 El formulario dice: *" + solicitanteForm + "*\n" +
+                    "📌 Tu usuario es: *" + sesion.getNombre() + "*\n\n" +
+                    "👉 Por seguridad, solo puedes subir formularios a tu nombre.\n" +
+                    "👉 Solicita al funcionario correcto que suba el formulario.";
+        }
+
+        if (ciForm != null && !ciForm.trim().isEmpty()) {
+            String cedulaSesion = obtenerCedulaUsuario(sesion.getUsuarioId());
+
+            if (cedulaSesion != null && !ciForm.trim().equals(cedulaSesion.trim())) {
+                return "⚠️ *La cédula del formulario no coincide con la tuya.*\n\n" +
+                        "📌 El formulario dice: *" + ciForm + "*\n" +
+                        "📌 Tu cédula es: *" + cedulaSesion + "*\n\n" +
+                        "👉 Por seguridad, solo puedes subir formularios a tu nombre.";
+            }
+        }
+
+        System.out.println(">>> ✅ Validación de solicitante OK: " + solicitanteForm);
+        return null;
+    }
+
+    /**
+     * Validaciones básicas de los campos del formulario de solicitud.
+     */
+    private String validarCamposBasicosSolicitud(FormularioSolicitudDTO form) {
+        if (form.getProposito() == null || form.getProposito().trim().length() < 5) {
+            return "⚠️ *El propósito del anticipo es demasiado corto o está vacío.*\n\n" +
+                    "📌 El formulario debe incluir un propósito claro de al menos 5 caracteres.\n\n" +
+                    "👉 Verifica el documento y vuelve a enviarlo.";
+        }
+        if (form.getPresupuesto() == null || form.getPresupuesto().compareTo(BigDecimal.ZERO) <= 0) {
+            return "⚠️ *El presupuesto del anticipo debe ser mayor a cero.*\n\n" +
+                    "📌 El formulario debe incluir un monto válido.\n\n" +
+                    "👉 Verifica el documento y vuelve a enviarlo.";
+        }
+        return null;
+    }
+
+    /**
+     * Validaciones básicas de las facturas.
+     */
+    private String validarFactura(FacturaExtraidaDTO factura) {
+        if (factura.getMonto() == null || factura.getMonto().compareTo(BigDecimal.ZERO) <= 0) {
+            return "⚠️ *El monto de la factura debe ser mayor a cero.*\n\n" +
+                    "📌 Verifica que sea una factura válida.\n\n" +
+                    "👉 Vuelve a subir el archivo.";
+        }
+        return null;
+    }
+
+    /**
+     * Valida el formulario de liquidación contra la solicitud original.
+     */
     private String validarFormularioLiquidacion(FormularioLiquidacionDTO form, SesionUsuario sesion) {
 
         Optional<SolicitudResponseDTO> solicitudOpt =
@@ -337,18 +528,6 @@ public class DocenteChatService {
         }
 
         SolicitudResponseDTO solicitud = solicitudOpt.get();
-
-        if (form.getSolicitante() != null && sesion.getNombre() != null) {
-            String solicitanteForm = normalizar(form.getSolicitante());
-            String nombreSesion = normalizar(sesion.getNombre());
-
-            if (!solicitanteForm.equals(nombreSesion)) {
-                return "⚠️ El nombre del solicitante no coincide con el registrado.\n\n" +
-                        "📌 El formulario dice: *" + form.getSolicitante() + "*\n" +
-                        "📌 Tu usuario es: *" + sesion.getNombre() + "*\n\n" +
-                        "👉 Por seguridad, el formulario debe estar a tu nombre.";
-            }
-        }
 
         if (form.getUnidad() != null && solicitud.getUnidad() != null) {
             String unidadForm = normalizar(form.getUnidad());
@@ -384,6 +563,20 @@ public class DocenteChatService {
         }
 
         return null;
+    }
+
+    /**
+     * Obtiene la cédula del usuario desde la BD.
+     */
+    private String obtenerCedulaUsuario(Long usuarioId) {
+        try {
+            return usuarioService.buscarPorId(usuarioId)
+                    .map(dto -> dto.getCedula())
+                    .orElse(null);
+        } catch (Exception e) {
+            System.err.println("Error al obtener cédula del usuario " + usuarioId + ": " + e.getMessage());
+            return null;
+        }
     }
 
     // ==================== CÁLCULO DE SALDO ====================
@@ -446,14 +639,19 @@ public class DocenteChatService {
         historialDTO.setEstadoAnterior(null);
         historialDTO.setEstadoNuevo("Pendiente");
         historialDTO.setUsuarioId(sesion.getUsuarioId());
-        historialDTO.setObservacion("Solicitud creada por el docente");
+        historialDTO.setObservacion("Solicitud creada por el funcionario");
         historialEstadoService.guardar(historialDTO);
 
-        NotificacionRequestDTO notifDTO = new NotificacionRequestDTO();
-        notifDTO.setTramiteId(tramite.getTramiteId());
-        notifDTO.setDestinatario("maria.lopez@iti.edu.ec");
-        notifDTO.setTipo("Nueva solicitud pendiente");
-        notificacionService.guardar(notifDTO);
+        String correoJefe = usuarioService.obtenerCorreoJefeInmediato(sesion.getUsuarioId());
+        if (correoJefe == null) {
+            System.err.println("⚠️ El funcionario " + sesion.getNombre() + " no tiene jefe inmediato asignado.");
+        } else {
+            NotificacionRequestDTO notifDTO = new NotificacionRequestDTO();
+            notifDTO.setTramiteId(tramite.getTramiteId());
+            notifDTO.setDestinatario(correoJefe);
+            notifDTO.setTipo("Nueva solicitud pendiente");
+            notificacionService.guardar(notifDTO);
+        }
 
         sesion.setAccionPendiente(null);
         sesion.setFormularioSolicitud(null);
@@ -479,14 +677,58 @@ public class DocenteChatService {
 
         BigDecimal saldo = anticipo.subtract(totalFacturas);
 
-        // Crear trámite de liquidación
+        // ✅ Si es SOBRANTE: pedir comprobante ANTES de crear la liquidación
+        if (saldo.compareTo(BigDecimal.ZERO) > 0) {
+            sesion.setEsperandoComprobanteDevolucion(true);
+            sesion.setMontoDevolucionPendiente(saldo);
+            sesion.setSubiendoFacturas(false);
+
+            StringBuilder resumen = new StringBuilder();
+            resumen.append("📊 *Resumen de la liquidación*\n\n");
+            resumen.append("💰 Anticipo: $").append(anticipo).append("\n");
+            resumen.append("📉 Total gastado: $").append(totalFacturas).append("\n");
+            resumen.append("📈 Saldo a devolver: $").append(saldo).append("\n\n");
+            resumen.append("⚠️ *Debes devolver $").append(saldo).append(" al ITI.*\n\n");
+            resumen.append("📎 Para continuar, por favor sube el comprobante de depósito en formato PDF.\n\n");
+            resumen.append("⚠️ Solo se aceptan comprobantes *digitales* (PDF descargado de la banca en línea).\n");
+            resumen.append("❌ No se aceptan fotos de tickets físicos, escaneos ni capturas de pantalla.");
+
+            return resumen.toString();
+        }
+
+        // FALTANTE o EXACTO: crear la liquidación directamente (sin comprobante)
+        return crearLiquidacionYCerrar(sesion, null, null);
+    }
+
+    /**
+     * Crea la liquidación completa.
+     * @param nombreComprobanteDevolucion Si no es null, es un caso SOBRANTE con comprobante subido.
+     * @param extraido                    Datos parseados del comprobante (puede ser null si Azure DI falló).
+     */
+    private String crearLiquidacionYCerrar(SesionUsuario sesion,
+                                           String nombreComprobanteDevolucion,
+                                           ComprobanteExtraidoDTO extraido) {
+        FormularioLiquidacionDTO form = sesion.getFormularioLiquidacion();
+
+        Optional<SolicitudResponseDTO> solicitudOpt = solicitudService.buscarAnticipoTransferido(sesion.getUsuarioId());
+        BigDecimal anticipo = solicitudOpt.map(SolicitudResponseDTO::getPresupuesto)
+                .orElse(BigDecimal.ZERO);
+
+        BigDecimal totalFacturas = BigDecimal.ZERO;
+        for (FormularioLiquidacionDTO.LineaFactura f : sesion.getFacturasExtraidas()) {
+            if (f.getValor() != null) {
+                totalFacturas = totalFacturas.add(f.getValor());
+            }
+        }
+
+        BigDecimal saldo = anticipo.subtract(totalFacturas);
+
         TramiteRequestDTO tramiteDTO = new TramiteRequestDTO();
         tramiteDTO.setUsuarioId(sesion.getUsuarioId());
         tramiteDTO.setTipoTramiteId(2L);
         tramiteDTO.setEstado("Liquidación en proceso");
         TramiteResponseDTO tramite = tramiteService.guardar(tramiteDTO);
 
-        // Crear liquidación
         LiquidacionRequestDTO liquidacionDTO = new LiquidacionRequestDTO();
         liquidacionDTO.setTramiteId(tramite.getTramiteId());
         liquidacionDTO.setTotalGastado(totalFacturas);
@@ -494,7 +736,6 @@ public class DocenteChatService {
         liquidacionDTO.setFechaPresentacion(LocalDate.now());
         LiquidacionResponseDTO liquidacion = liquidacionService.guardar(liquidacionDTO);
 
-        // Guardar facturas
         for (FormularioLiquidacionDTO.LineaFactura linea : sesion.getFacturasExtraidas()) {
             FacturaRequestDTO facturaDTO = new FacturaRequestDTO();
             facturaDTO.setLiquidacionId(liquidacion.getLiquidacionId());
@@ -505,32 +746,57 @@ public class DocenteChatService {
             facturaService.guardar(facturaDTO);
         }
 
-        // Historial
+        // ✅ Si es SOBRANTE: crear la Devolución
+        if (nombreComprobanteDevolucion != null && saldo.compareTo(BigDecimal.ZERO) > 0) {
+            DevolucionRequestDTO devolucionDTO = new DevolucionRequestDTO();
+            devolucionDTO.setLiquidacionId(liquidacion.getLiquidacionId());
+            devolucionDTO.setMonto(saldo);
+            devolucionDTO.setFechaDevolucion(LocalDate.now());
+            devolucionDTO.setComprobantePdf(nombreComprobanteDevolucion);
+
+            if (extraido != null) {
+                // Comprobante validado automáticamente
+                devolucionDTO.setBancoOrigen(extraido.getBancoOrigen());
+                devolucionDTO.setCuentaOrigen(extraido.getCuentaOrigen());
+                devolucionDTO.setMontoDepositado(extraido.getMontoDepositado());
+                devolucionDTO.setFechaDeposito(extraido.getFechaDeposito());
+                devolucionDTO.setEstado("Comprobante subido");
+            } else {
+                // Azure DI falló → validación manual
+                devolucionDTO.setEstado("Comprobante subido - Validación manual");
+            }
+
+            devolucionService.guardar(devolucionDTO);
+            System.out.println(">>> ✅ Devolución creada con comprobante: " + nombreComprobanteDevolucion);
+        }
+
         HistorialEstadoRequestDTO historialDTO = new HistorialEstadoRequestDTO();
         historialDTO.setTramiteId(tramite.getTramiteId());
         historialDTO.setEstadoAnterior(null);
         historialDTO.setEstadoNuevo("Liquidación en proceso");
         historialDTO.setUsuarioId(sesion.getUsuarioId());
-        historialDTO.setObservacion("Liquidación creada por el docente");
+        historialDTO.setObservacion("Liquidación creada por el funcionario");
         historialEstadoService.guardar(historialDTO);
 
-        // Notificar al Asistente Contable
-        NotificacionRequestDTO notifDTO = new NotificacionRequestDTO();
-        notifDTO.setTramiteId(tramite.getTramiteId());
-        notifDTO.setDestinatario("sofia.vega@iti.edu.ec");
-        notifDTO.setTipo("Nueva liquidación pendiente");
-        notificacionService.guardar(notifDTO);
+        String correoAsistente = usuarioService.obtenerCorreoPorRol("Asistente Contable");
+        if (correoAsistente == null) {
+            System.err.println("⚠️ No se encontró un Asistente Contable en la BD.");
+        } else {
+            NotificacionRequestDTO notifDTO = new NotificacionRequestDTO();
+            notifDTO.setTramiteId(tramite.getTramiteId());
+            notifDTO.setDestinatario(correoAsistente);
+            notifDTO.setTipo("Nueva liquidación pendiente");
+            notificacionService.guardar(notifDTO);
+        }
 
-        // Limpiar formulario y facturas
+        // Limpiar sesión
         sesion.setFormularioLiquidacion(null);
         sesion.setSubiendoFacturas(false);
         sesion.getFacturasExtraidas().clear();
-
-        // NO ponemos accionPendiente = DEVOLUCION.
-        // La devolución la crea la Contadora al aprobar.
         sesion.setAccionPendiente(null);
+        sesion.setEsperandoComprobanteDevolucion(false);
+        sesion.setMontoDevolucionPendiente(null);
 
-        // Mensaje al docente (sin mencionar la devolución todavía)
         StringBuilder respuesta = new StringBuilder();
         respuesta.append("✅ Liquidación registrada correctamente.\n\n");
         respuesta.append("🆔 Trámite: *").append(tramite.getTramiteId()).append("*\n");
@@ -538,8 +804,16 @@ public class DocenteChatService {
         respuesta.append("📈 Saldo: $").append(saldo).append("\n\n");
 
         if (saldo.compareTo(BigDecimal.ZERO) > 0) {
-            respuesta.append("⚠️ Deberás devolver $").append(saldo).append(" al ITI.\n");
-            respuesta.append("(Se te notificará cuando la liquidación sea aprobada).\n\n");
+            if (extraido != null) {
+                respuesta.append("⚠️ Devolución registrada. La Contadora la validará.\n\n");
+                if (extraido.getObservacion() != null && !extraido.getObservacion().isEmpty()) {
+                    respuesta.append("📋 Observaciones: ").append(extraido.getObservacion()).append("\n\n");
+                }
+            } else {
+                respuesta.append("⚠️ Devolución registrada (validación manual).\n\n");
+                respuesta.append("📌 El sistema no pudo leer automáticamente el comprobante.\n");
+                respuesta.append("📌 La *Contadora* lo validará manualmente.\n\n");
+            }
         } else if (saldo.compareTo(BigDecimal.ZERO) < 0) {
             respuesta.append("ℹ️ El ITI te deberá devolver $").append(saldo.abs()).append(".\n");
             respuesta.append("(Se te notificará cuando la liquidación sea aprobada).\n\n");
@@ -581,16 +855,13 @@ public class DocenteChatService {
                 .replaceAll("\\s+", " ");
     }
 
-    // ============================================================
-// VERIFICAR SI TIENE LIQUIDACIONES PENDIENTES
-// ============================================================
     private boolean tieneLiquidacionesPendientes(Long usuarioId) {
         try {
             List<String> estadosPendientes = List.of(
                     "Liquidación en proceso",
                     "Liquidación revisada",
                     "Liquidación aprobada",
-                    "Devuelto al docente"
+                    "Devuelto al funcionario"
             );
 
             List<Tramite> pendientes = tramiteRepository.buscarPorUsuarioYEstados(usuarioId, estadosPendientes);

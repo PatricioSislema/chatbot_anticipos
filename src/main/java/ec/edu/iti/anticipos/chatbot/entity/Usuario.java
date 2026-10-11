@@ -1,12 +1,14 @@
 package ec.edu.iti.anticipos.chatbot.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import lombok.Data;
 
 /**
  * Esta entidad representa la tabla "usuario".
  * Almacena los usuarios del sistema con sus credenciales y rol asignado.
- * Incluye el estado de bloqueo y el contador de intentos fallidos.
+ * Incluye el estado de bloqueo, el contador de intentos fallidos,
+ * el chat_id de Telegram y la relación con el jefe inmediato.
  */
 @Data
 @Entity
@@ -35,10 +37,29 @@ public class Usuario {
     @JoinColumn(name = "rol_id", nullable = false)
     private Rol rol;
 
-    // ===== NUEVOS CAMPOS =====
+    // ===== CAMPOS DE BLOQUEO =====
     @Column(name = "bloqueado", nullable = false)
     private Boolean bloqueado = false;
 
     @Column(name = "intentos_fallidos", nullable = false)
     private Integer intentosFallidos = 0;
+
+    /**
+     * ID de chat de Telegram del usuario.
+     * Se llena automáticamente cuando el usuario hace login por el bot.
+     * Puede ser null si el usuario nunca ha usado el bot.
+     */
+    @Column(name = "telegram_chat_id", length = 50)
+    private String telegramChatId;
+
+    /**
+     * Jefe inmediato del usuario.
+     * Solo aplica para Funcionarios.
+     * Apunta a otro Usuario que ocupa el rol de "Jefe Inmediato".
+     * Puede ser null para los demás roles.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "jefe_inmediato_id")
+    @JsonIgnore
+    private Usuario jefeInmediato;
 }

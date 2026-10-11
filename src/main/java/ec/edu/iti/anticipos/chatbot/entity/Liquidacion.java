@@ -7,7 +7,8 @@ import java.time.LocalDate;
 
 /**
  * Esta entidad representa la tabla "liquidacion".
- * Almacena los datos de la liquidación de un anticipo: total gastado, saldo y fecha.
+ * Almacena los datos de la liquidación de un anticipo: total gastado, saldo,
+ * fecha de presentación y el tipo de caso resultante (SOBRANTE, FALTANTE, EXACTO).
  */
 @Data
 @Entity
@@ -27,6 +28,15 @@ public class Liquidacion {
 
     @Column(name = "fecha_presentacion")
     private LocalDate fechaPresentacion;
+
+    /**
+     * Tipo de caso de la liquidación:
+     *  - SOBRANTE: gastó menos de lo anticipado → debe devolver.
+     *  - FALTANTE: gastó más de lo anticipado → debe reembolsarse.
+     *  - EXACTO: gastó exactamente lo anticipado.
+     */
+    @Column(name = "tipo_caso", length = 20)
+    private String tipoCaso;
 
     // Relación: una liquidación pertenece a un solo trámite
     @OneToOne

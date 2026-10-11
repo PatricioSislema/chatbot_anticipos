@@ -7,6 +7,7 @@ import java.time.LocalDate;
 /**
  * Esta entidad representa la tabla "notificacion".
  * Almacena las notificaciones enviadas a los actores del proceso.
+ * Incluye el canal por el cual se envió: Correo, Telegram o Ambos.
  */
 @Data
 @Entity
@@ -29,6 +30,15 @@ public class Notificacion {
 
     @Column(name = "estado", length = 20)
     private String estado;
+
+    /**
+     * Canal por el cual se envió la notificación:
+     *  - Correo: solo por correo electrónico.
+     *  - Telegram: solo por el bot de Telegram.
+     *  - Ambos: por ambos canales.
+     */
+    @Column(name = "canal", length = 20)
+    private String canal = "Correo";
 
     // Relación: muchas notificaciones pertenecen a un solo trámite
     @ManyToOne

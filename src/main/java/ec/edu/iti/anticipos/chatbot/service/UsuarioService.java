@@ -19,7 +19,7 @@ import java.util.Optional;
  * Servicio para la entidad Usuario.
  * Contiene la lógica de negocio relacionada con los usuarios y el inicio de sesión.
  * Las contraseñas se almacenan hasheadas con BCrypt.
- * Incluye bloqueo por intentos fallidos.
+ * Incluye bloqueo por intentos fallidos y gestión del chatId de Telegram.
  */
 @Service
 @RequiredArgsConstructor
@@ -110,15 +110,10 @@ public class UsuarioService {
         System.out.println("=== LOGIN DEBUG ===");
         System.out.println("Correo recibido: [" + correo + "]");
 
-        List<Usuario> usuarios = usuarioRepository.findAll();
-
-        Optional<Usuario> usuarioOpt = usuarios.stream()
-                .filter(u -> u.getCorreo().trim().toLowerCase().equals(correo))
-                .findFirst();
+        Optional<Usuario> usuarioOpt = usuarioRepository.findByCorreo(correo);
 
         LoginResponseDTO response = new LoginResponseDTO();
 
-        // Usuario no encontrado
         if (usuarioOpt.isEmpty()) {
             response.setAutenticado(false);
             System.out.println("Login fallido: usuario no encontrado");
@@ -127,7 +122,6 @@ public class UsuarioService {
 
         Usuario usuario = usuarioOpt.get();
 
-        // Usuario bloqueado
         if (Boolean.TRUE.equals(usuario.getBloqueado())) {
             response.setAutenticado(false);
             response.setBloqueado(true);
@@ -135,7 +129,6 @@ public class UsuarioService {
             return response;
         }
 
-        // Contraseña correcta
         if (passwordEncoder.matches(contrasena, usuario.getContrasena())) {
             usuario.setIntentosFallidos(0);
             usuarioRepository.save(usuario);
@@ -151,7 +144,6 @@ public class UsuarioService {
             return response;
         }
 
-        // Contraseña incorrecta
         int nuevosIntentos = (usuario.getIntentosFallidos() == null ? 0 : usuario.getIntentosFallidos()) + 1;
         usuario.setIntentosFallidos(nuevosIntentos);
 
@@ -172,12 +164,73 @@ public class UsuarioService {
 
     // Verificar si un correo existe en la base de datos
     public boolean existeCorreo(String correo) {
-        return usuarioRepository.findAll()
-                .stream()
-                .anyMatch(u -> u.getCorreo().equalsIgnoreCase(correo));
+        return usuarioRepository.existsByCorreo(correo);
     }
 
-    // Convertir entidad a DTO de respuesta
+    // ============================================================
+    // MÉTODOS DE TELEGRAM
+    // ============================================================
+
+    /**
+     * Actualizar el chatId de Telegram de un usuario.
+     */
+    public void actualizarTelegramChatId(Long usuarioId, String chatId) {
+        Usuario usuario = usuarioRepository.findById(usuarioId)
+                .orElseThrow(() -> new RuntimeException("Usuario no encontrado"));
+        usuario.setTelegramChatId(chatId);
+        usuarioRepository.save(usuario);
+    }
+
+    /**
+     * Obtener el chatId de Telegram de un usuario por su correo.
+     * Retorna null si el usuario no tiene chatId asignado o no existe.
+     */
+    public String obtenerTelegramChatIdPorCorreo(String correo) {
+        Optional<Usuario> usuarioOpt = usuarioRepository.findByCorreo(correo);
+        return usuarioOpt.map(Usuario::getTelegramChatId).orElse(null);
+    }
+
+    /**
+     * Obtener el chatId de Telegram de un usuario por su ID.
+     * Retorna null si el usuario no tiene chatId asignado o no existe.
+     */
+    public String obtenerTelegramChatIdPorUsuarioId(Long usuarioId) {
+        Optional<Usuario> usuarioOpt = usuarioRepository.findById(usuarioId);
+        return usuarioOpt.map(Usuario::getTelegramChatId).orElse(null);
+    }
+
+    // ============================================================
+    // MÉTODOS HELPER PARA NOTIFICACIONES DINÁMICAS (NUEVOS)
+    // ============================================================
+
+    /**
+     * Obtener el correo del primer usuario que tenga un rol específico.
+     * Útil para notificar a "la Contadora", "el Director", etc.
+     */
+    public String obtenerCorreoPorRol(String rolNombre) {
+        return usuarioRepository.findByRolNombre(rolNombre)
+                .stream()
+                .findFirst()
+                .map(Usuario::getCorreo)
+                .orElse(null);
+    }
+
+    /**
+     * Obtener el correo del jefe inmediato de un usuario.
+     * Retorna null si el usuario no tiene jefe asignado o no existe.
+     */
+    public String obtenerCorreoJefeInmediato(Long usuarioId) {
+        Optional<Usuario> usuarioOpt = usuarioRepository.findById(usuarioId);
+        if (usuarioOpt.isEmpty()) return null;
+
+        Usuario jefe = usuarioOpt.get().getJefeInmediato();
+        return jefe != null ? jefe.getCorreo() : null;
+    }
+
+    // ============================================================
+    // CONVERSIÓN A DTO
+    // ============================================================
+
     private UsuarioResponseDTO convertirAResponse(Usuario usuario) {
         UsuarioResponseDTO dto = new UsuarioResponseDTO();
         dto.setUsuarioId(usuario.getUsuarioId());
@@ -185,6 +238,9 @@ public class UsuarioService {
         dto.setNombre(usuario.getNombre());
         dto.setCorreo(usuario.getCorreo());
         dto.setRolNombre(usuario.getRol().getNombre());
+        dto.setBloqueado(usuario.getBloqueado());
+        dto.setIntentosFallidos(usuario.getIntentosFallidos());
+        dto.setTelegramChatId(usuario.getTelegramChatId());
         return dto;
     }
 }

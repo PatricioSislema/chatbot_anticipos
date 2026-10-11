@@ -16,7 +16,7 @@ import java.util.Optional;
 /**
  * Servicio para la entidad Liquidacion.
  * Contiene la lógica de negocio relacionada con las liquidaciones de anticipo,
- * incluyendo el cálculo de saldos.
+ * incluyendo el cálculo de saldos y la detección del tipo de caso.
  */
 @Service
 @RequiredArgsConstructor
@@ -39,6 +39,12 @@ public class LiquidacionService {
                 .map(this::convertirAResponse);
     }
 
+    // Buscar una liquidación por trámite
+    public Optional<LiquidacionResponseDTO> buscarPorTramite(Long tramiteId) {
+        return liquidacionRepository.findByTramiteTramiteId(tramiteId)
+                .map(this::convertirAResponse);
+    }
+
     // Guardar una nueva liquidación
     public LiquidacionResponseDTO guardar(LiquidacionRequestDTO dto) {
         Tramite tramite = tramiteRepository.findById(dto.getTramiteId())
@@ -50,12 +56,36 @@ public class LiquidacionService {
         liquidacion.setSaldo(dto.getSaldo());
         liquidacion.setFechaPresentacion(dto.getFechaPresentacion());
 
+        // ✅ Detectar y setear el tipo de caso automáticamente
+        liquidacion.setTipoCaso(detectarTipoCaso(dto.getSaldo()));
+
         Liquidacion guardada = liquidacionRepository.save(liquidacion);
         return convertirAResponse(guardada);
     }
 
+    // ✅ NUEVO: Detectar el tipo de caso según el saldo
+    public String detectarTipoCaso(BigDecimal saldo) {
+        if (saldo == null) return null;
+
+        if (saldo.compareTo(BigDecimal.ZERO) > 0) {
+            return "SOBRANTE";
+        } else if (saldo.compareTo(BigDecimal.ZERO) < 0) {
+            return "FALTANTE";
+        } else {
+            return "EXACTO";
+        }
+    }
+
+    // ✅ NUEVO: Actualizar el tipo de caso de una liquidación existente
+    public LiquidacionResponseDTO actualizarTipoCaso(Long liquidacionId, String tipoCaso) {
+        Liquidacion liquidacion = liquidacionRepository.findById(liquidacionId)
+                .orElseThrow(() -> new RuntimeException("Liquidación no encontrada"));
+        liquidacion.setTipoCaso(tipoCaso);
+        Liquidacion actualizada = liquidacionRepository.save(liquidacion);
+        return convertirAResponse(actualizada);
+    }
+
     // Calcular el saldo de una liquidación
-    // saldo = anticipo - total gastado
     public BigDecimal calcularSaldo(BigDecimal anticipo, BigDecimal totalGastado) {
         return anticipo.subtract(totalGastado);
     }
@@ -63,10 +93,6 @@ public class LiquidacionService {
     // Eliminar una liquidación por ID
     public void eliminar(Long id) {
         liquidacionRepository.deleteById(id);
-    }
-    public Optional<LiquidacionResponseDTO> buscarPorTramite(Long tramiteId) {
-        return liquidacionRepository.findByTramiteTramiteId(tramiteId)
-                .map(this::convertirAResponse);
     }
 
     // Convertir entidad a DTO de respuesta
@@ -77,6 +103,7 @@ public class LiquidacionService {
         dto.setTotalGastado(liquidacion.getTotalGastado());
         dto.setSaldo(liquidacion.getSaldo());
         dto.setFechaPresentacion(liquidacion.getFechaPresentacion());
+        dto.setTipoCaso(liquidacion.getTipoCaso());
         return dto;
     }
 }
