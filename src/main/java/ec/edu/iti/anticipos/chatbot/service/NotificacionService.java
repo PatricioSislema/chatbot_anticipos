@@ -72,19 +72,26 @@ public class NotificacionService {
 
         Notificacion guardada = notificacionRepository.save(notificacion);
 
-        // ✅ Enviar correo de forma ASÍNCRONA
-        enviarCorreoAsync(dto.getDestinatario(), dto.getTipo(),
-                "Tienes una nueva notificación del sistema de anticipos del ITI. " +
-                        "Trámite ID: " + dto.getTramiteId() + ". Tipo: " + dto.getTipo());
+        // Determinar el mensaje a enviar
+        String mensaje;
+        if (dto.getMensajePersonalizado() != null && !dto.getMensajePersonalizado().isEmpty()) {
+            mensaje = dto.getMensajePersonalizado();
+        } else {
+            mensaje = "Tienes una nueva notificación del sistema de anticipos del ITI.\n" +
+                    "Trámite ID: " + dto.getTramiteId() + "\n" +
+                    "Tipo: " + dto.getTipo();
+        }
 
-        // ✅ Intentar enviar por Telegram si el usuario tiene chatId
-        enviarTelegramAsync(dto.getDestinatario(), dto.getTipo(),
-                "Trámite ID: " + dto.getTramiteId() + "\nTipo: " + dto.getTipo());
+        // ✅ Enviar correo de forma ASÍNCRONA
+        enviarCorreoAsync(dto.getDestinatario(), dto.getTipo(), mensaje);
+
+        // ✅ Enviar por Telegram si el usuario tiene chatId
+        enviarTelegramAsync(dto.getDestinatario(), dto.getTipo(), mensaje);
 
         return convertirAResponse(guardada);
     }
 
-    // ✅ Método asíncrono para enviar correo
+    // Método asíncrono para enviar correo
     @Async
     public void enviarCorreoAsync(String destinatario, String asunto, String cuerpo) {
         try {
@@ -92,11 +99,12 @@ public class NotificacionService {
             message.setTo(destinatario);
             message.setSubject(asunto);
             message.setText(cuerpo);
-            message.setFrom("chatbot.iti@gmail.com");
+            // ⚠️ CAMBIAMOS ESTO: Debe ser el mismo correo del application.properties
+            message.setFrom("hpatriciosc@gmail.com");
             mailSender.send(message);
-            System.out.println("Correo enviado a: " + destinatario);
+            System.out.println("✅ Correo enviado a: " + destinatario);
         } catch (Exception e) {
-            System.err.println("Error al enviar correo: " + e.getMessage());
+            System.err.println("❌ Error al enviar correo: " + e.getMessage());
         }
     }
 
@@ -112,7 +120,16 @@ public class NotificacionService {
                 return;
             }
 
-            enviarMensajeTelegram(chatId, "📬 *" + asunto + "*\n\n" + cuerpo);
+            // ✅ Si el cuerpo ya viene con formato (encabezado con emoji), lo enviamos tal cual.
+            // Sino, agregamos un encabezado genérico.
+            String mensaje;
+            if (cuerpo != null && (cuerpo.startsWith("📬") || cuerpo.startsWith("🔔") || cuerpo.startsWith("*"))) {
+                mensaje = cuerpo;
+            } else {
+                mensaje = "📬 *" + asunto + "*\n\n" + cuerpo;
+            }
+
+            enviarMensajeTelegram(chatId, mensaje);
         } catch (Exception e) {
             System.err.println("Error al enviar Telegram: " + e.getMessage());
         }

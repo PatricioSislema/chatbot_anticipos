@@ -646,10 +646,20 @@ public class FuncionarioChatService {
         if (correoJefe == null) {
             System.err.println("⚠️ El funcionario " + sesion.getNombre() + " no tiene jefe inmediato asignado.");
         } else {
+            // ✅ Construir mensaje personalizado
+            String mensajePersonalizado =
+                    "📬 *Nueva solicitud pendiente*\n\n" +
+                            "🆔 Trámite: #" + tramite.getTramiteId() + "\n" +
+                            "👤 Solicitante: " + sesion.getNombre() + "\n" +
+                            "🎯 Propósito: " + form.getProposito() + "\n" +
+                            "💰 Presupuesto: $" + form.getPresupuesto() + "\n\n" +
+                            "👉 Ingresa al bot para revisarla.";
+
             NotificacionRequestDTO notifDTO = new NotificacionRequestDTO();
             notifDTO.setTramiteId(tramite.getTramiteId());
             notifDTO.setDestinatario(correoJefe);
             notifDTO.setTipo("Nueva solicitud pendiente");
+            notifDTO.setMensajePersonalizado(mensajePersonalizado);
             notificacionService.guardar(notifDTO);
         }
 

@@ -40,10 +40,22 @@ public class TipoTramiteController {
         return ResponseEntity.ok(tipoTramiteService.guardar(dto));
     }
 
+    // Actualizar un tipo de trámite
+    @PutMapping("/{id}")
+    public ResponseEntity<TipoTramiteResponseDTO> actualizar(
+            @PathVariable Long id,
+            @RequestBody TipoTramiteRequestDTO dto) {
+        return ResponseEntity.ok(tipoTramiteService.actualizar(id, dto));
+    }
+
     // Eliminar un tipo de trámite por ID
     @DeleteMapping("/{id}")
-    public ResponseEntity<Void> eliminar(@PathVariable Long id) {
-        tipoTramiteService.eliminar(id);
-        return ResponseEntity.noContent().build();
+    public ResponseEntity<?> eliminar(@PathVariable Long id) {
+        try {
+            tipoTramiteService.eliminar(id);
+            return ResponseEntity.noContent().build();
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(java.util.Map.of("message", e.getMessage()));
+        }
     }
 }

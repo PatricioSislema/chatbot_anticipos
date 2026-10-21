@@ -16,6 +16,7 @@ import ec.edu.iti.anticipos.chatbot.service.UsuarioService;
 import ec.edu.iti.anticipos.chatbot.sesion.SesionUsuario;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import ec.edu.iti.anticipos.chatbot.util.MensajeHelper;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -27,19 +28,18 @@ import java.util.Optional;
  *
  * Maneja DOS flujos:
  *
- * FLUJO ANTICIPO (solicitud original):
- *  1. Contadora aprueba → trámite en "Aprobado por Contadora".
- *  2. Colectora genera orden → trámite en "Orden generada".
- *  3. Director aprueba orden → trámite en "Orden aprobada".
- *  4. Colectora ejecuta transferencia → trámite en "Transferido".
- *  5. Contadora envía comprobante al funcionario.
- *
- * FLUJO REEMBOLSO (caso FALTANTE):
- *  1. Director autoriza reembolso → Reembolso en estado "Autorizado".
- *  2. Colectora genera orden → trámite en "Orden generada".
- *  3. Director aprueba orden → trámite en "Orden aprobada".
- *  4. Colectora ejecuta transferencia → trámite en "Reembolso transferido".
- *  5. Contadora cierra reembolso → trámite en "Liquidación cerrada".
+ *  * FLUJO ANTICIPO (solicitud original):
+ *  *  1. Contadora aprueba → trámite en "Aprobado por Contadora".
+ *  *  2. Colectora genera orden → trámite en "Orden generada".
+ *  *  3. Director aprueba orden → trámite en "Orden aprobada" → dinero se efectúa.
+ *  *  4. Contadora registra el comprobante → trámite en "Transferido".
+ *  *  5. Notifica al Funcionario y Director.
+ *  *
+ *  * FLUJO REEMBOLSO (caso FALTANTE):
+ *  *  1. Director autoriza reembolso → Reembolso en estado "Autorizado".
+ *  *  2. Colectora genera orden → trámite en "Orden generada".
+ *  *  3. Director aprueba orden → trámite en "Orden aprobada" → dinero se efectúa.
+ *  *  4. Contadora cierra reembolso → trámite en "Liquidación cerrada".
  */
 @Service
 @RequiredArgsConstructor
@@ -71,6 +71,21 @@ public class ColectoraChatService {
         // Generar orden
         if (mensajeLower.contains("generar") || mensajeLower.contains("orden")) {
             return generarOrden(sesion);
+        }
+
+        // ✅ Validación de texto inválido (al final, solo si nada más coincide)
+        if (sesion.getTramiteEnRevision() == null
+                && !mensajeLower.isEmpty()
+                && !mensajeLower.matches("\\d+")
+                && !mensajeLower.contains("menu")
+                && !mensajeLower.contains("menú")
+                && !mensajeLower.contains("ayuda")
+                && !mensajeLower.contains("cancelar")
+                && !mensajeLower.contains("salir")
+                && !mensajeLower.contains("pendiente")
+                && !mensajeLower.contains("revisar")) {
+            return "⚠️ Por favor, ingresa solo el número del trámite que deseas gestionar.\n\n" +
+                    "👉 Ejemplo: *13*";
         }
 
         return null;
@@ -120,7 +135,7 @@ public class ColectoraChatService {
             }
         }
 
-        lista.append("\n👉 Escribe *registrar ID* o solo el número del trámite.");
+        lista.append("\n👉 Escribe el *número del trámite* que deseas gestionar.");
         return lista.toString();
     }
 
@@ -141,7 +156,9 @@ public class ColectoraChatService {
 
         Optional<TramiteDetalleDTO> detalleOpt = tramiteService.obtenerDetalle(tramiteId);
         if (detalleOpt.isEmpty()) {
-            return "⚠️ No encontré el trámite *" + tramiteId + "*.";
+            return "⚠️ Trámite no encontrado.\n\n" +
+                    "📌 Por favor, ingresa el número de trámite que deseas registrar.\n\n" +
+                    "👉 Ejemplo: *13*";
         }
 
         TramiteDetalleDTO d = detalleOpt.get();
@@ -263,10 +280,16 @@ public class ColectoraChatService {
         // Notificar al Director Financiero
         String correoDirector = usuarioService.obtenerCorreoPorRol("Director Financiero");
         if (correoDirector != null) {
+            String mensaje = MensajeHelper.ordenGenerada(
+                    orden.getOrdenId(), tramiteId,
+                    orden.getValor().toString(),
+                    esReembolso ? "REEMBOLSO" : "ANTICIPO");
+
             NotificacionRequestDTO notifDTO = new NotificacionRequestDTO();
             notifDTO.setTramiteId(tramiteId);
             notifDTO.setDestinatario(correoDirector);
             notifDTO.setTipo("Orden de transferencia pendiente de aprobación");
+            notifDTO.setMensajePersonalizado(mensaje + "\n\n📌 Escribe: *aprobar orden " + orden.getOrdenId() + "*");
             notificacionService.guardar(notifDTO);
         }
 

@@ -42,9 +42,11 @@ public class OrdenTransferenciaService {
                 .map(this::convertirAResponse);
     }
 
-    // Buscar la orden de un trámite específico
+    // Buscar la orden de un trámite específico (CORREGIDO AQUÍ)
     public Optional<OrdenTransferenciaResponseDTO> buscarPorTramite(Long tramiteId) {
         return ordenTransferenciaRepository.findByTramiteTramiteId(tramiteId)
+                .stream()
+                .findFirst()
                 .map(this::convertirAResponse);
     }
 

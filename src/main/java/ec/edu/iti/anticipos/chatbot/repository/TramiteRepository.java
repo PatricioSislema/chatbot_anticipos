@@ -17,6 +17,11 @@ import java.util.List;
 @Repository
 public interface TramiteRepository extends JpaRepository<Tramite, Long> {
 
+    // ¡ESTA ES LA SOLUCIÓN! Sobrescribimos el findAll para traer al usuario y tipo de trámite de una vez (JOIN FETCH)
+    @Override
+    @Query("SELECT t FROM Tramite t JOIN FETCH t.usuario JOIN FETCH t.tipoTramite")
+    List<Tramite> findAll();
+
     // Buscar trámites por estado ("Pendiente")
     List<Tramite> findByEstado(String estado);
 
@@ -41,4 +46,8 @@ public interface TramiteRepository extends JpaRepository<Tramite, Long> {
             "ORDER BY t.fechaCreacion DESC")
     List<Tramite> buscarPorUsuarioYEstados(@Param("usuarioId") Long usuarioId,
                                            @Param("estados") List<String> estados);
+
+    // Buscar cuántos trámites usan un tipo específico (para validar eliminación)
+    long countByTipoTramiteTipoTramiteId(Long tipoTramiteId);
+
 }

@@ -55,6 +55,25 @@ public class AsistenteContableChatService {
             return iniciarDevolucion(sesion);
         }
 
+        // ✅ Si el usuario escribe texto inválido cuando está en el menú principal
+        if (sesion.getTramiteEnRevision() == null
+                && !mensajeLower.isEmpty()
+                && !mensajeLower.matches("\\d+")
+                && !mensajeLower.contains("menu")
+                && !mensajeLower.contains("menú")
+                && !mensajeLower.contains("ayuda")
+                && !mensajeLower.contains("cancelar")
+                && !mensajeLower.contains("salir")
+                && !mensajeLower.contains("pendiente")
+                && !mensajeLower.contains("revisar")
+                && !mensajeLower.contains("enviar")
+                && !mensajeLower.contains("aprobar")
+                && !mensajeLower.contains("devolver")
+                && !mensajeLower.contains("rechazar")) {
+            return "⚠️ Por favor, ingresa el *número de la liquidación* que deseas revisar.\n\n" +
+                    "👉 Ejemplo: *13*";
+        }
+
         return null;
     }
 
@@ -71,7 +90,8 @@ public class AsistenteContableChatService {
             lista.append("🆔 ").append(t.getTramiteId())
                     .append(" — ").append(t.getNombreUsuario()).append("\n");
         }
-        lista.append("\n👉 Escribe *seleccionar ID* o solo el número.");
+        lista.append("\n👉 Escribe el *número de la liquidación* que deseas revisar.");
+        lista.append("\nEjemplo: *13*.");
         return lista.toString();
     }
 

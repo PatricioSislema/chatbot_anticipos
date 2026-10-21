@@ -1,6 +1,5 @@
 package ec.edu.iti.anticipos.chatbot.entity;
 
-import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import lombok.Data;
 
@@ -20,11 +19,17 @@ public class Usuario {
     @Column(name = "usuario_id")
     private Long usuarioId;
 
-    @Column(name = "cedula", nullable = false, unique = true, length = 10)
+    @Column(name = "cedula", nullable = false, unique = true, length = 15)
     private String cedula;
 
     @Column(name = "nombre", nullable = false, length = 100)
     private String nombre;
+
+    @Column(name = "telefono", length = 20)
+    private String telefono;
+
+    @Column(name = "cargo", length = 50)
+    private String cargo;
 
     @Column(name = "correo", nullable = false, unique = true, length = 100)
     private String correo;
@@ -60,6 +65,5 @@ public class Usuario {
      */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "jefe_inmediato_id")
-    @JsonIgnore
     private Usuario jefeInmediato;
 }

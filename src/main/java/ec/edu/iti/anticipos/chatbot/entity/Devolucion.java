@@ -35,7 +35,7 @@ public class Devolucion {
      *  - Verificado: la Contadora verificó el comprobante.
      *  - Rechazado: el comprobante no es válido.
      */
-    @Column(name = "estado", length = 20)
+    @Column(name = "estado", length = 100)
     private String estado = "Pendiente";
 
     // ====== NUEVOS campos de auditoría del comprobante ======

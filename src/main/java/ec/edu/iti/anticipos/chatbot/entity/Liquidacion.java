@@ -42,4 +42,10 @@ public class Liquidacion {
     @OneToOne
     @JoinColumn(name = "tramite_id", nullable = false, unique = true)
     private Tramite tramite;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "tramite_original_id")
+    private Tramite tramiteOriginal;
+
+    // Genera los getters y setters con Alt+Insert o Lombok si lo usas
 }

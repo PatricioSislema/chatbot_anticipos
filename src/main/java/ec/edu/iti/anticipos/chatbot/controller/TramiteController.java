@@ -42,8 +42,11 @@ public class TramiteController {
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "10") int size) {
 
+        // Si el frontend envía un string vacío, lo convertimos a null
+        String estadoFiltro = (estado == null || estado.trim().isEmpty()) ? null : estado;
+
         Pageable pageable = PageRequest.of(page, size);
-        Page<Tramite> resultado = tramiteRepository.filtrar(estado, usuarioId, pageable);
+        Page<Tramite> resultado = tramiteRepository.filtrar(estadoFiltro, usuarioId, pageable);
 
         Page<TramiteResumenDTO> dto = resultado.map(this::convertirAResumen);
         return ResponseEntity.ok(dto);

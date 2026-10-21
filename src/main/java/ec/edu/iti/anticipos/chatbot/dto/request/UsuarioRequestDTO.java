@@ -12,4 +12,7 @@ public class UsuarioRequestDTO {
     private String correo;
     private String contrasena;
     private Long rolId;
+    private String telefono;
+    private String cargo;
+    private Long jefeInmediatoId; // Agrégalo también si no lo tenías
 }

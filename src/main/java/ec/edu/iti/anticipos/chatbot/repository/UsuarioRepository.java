@@ -29,4 +29,7 @@ public interface UsuarioRepository extends JpaRepository<Usuario, Long> {
 
     // Buscar los subordinados (usuarios cuyo jefe inmediato es este usuario)
     List<Usuario> findByJefeInmediatoUsuarioId(Long jefeInmediatoId);
+
+    // Busca ignorando mayúsculas y minúsculas
+    List<Usuario> findByRolNombreIgnoreCase(String rolNombre);
 }

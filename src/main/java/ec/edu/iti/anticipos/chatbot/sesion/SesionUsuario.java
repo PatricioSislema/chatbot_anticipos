@@ -70,6 +70,8 @@ public class SesionUsuario {
     // ✅ NUEVO: ID de la liquidación creada pero pendiente de comprobante (SOBRANTE)
     private Long liquidacionIdEnProceso;
 
+    private String contextoActual;
+
     // Contador de intentos fallidos de contraseña
     private int intentosFallidos = 0;
 

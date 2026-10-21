@@ -14,10 +14,6 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
 import java.util.List;
 
-/**
- * Filtro que intercepta cada petición HTTP, valida el token JWT
- * y establece el usuario autenticado en el contexto de Spring Security.
- */
 @Component
 @RequiredArgsConstructor
 public class JwtFilter extends OncePerRequestFilter {
@@ -39,16 +35,14 @@ public class JwtFilter extends OncePerRequestFilter {
                 String rol = jwtUtil.extraerRol(token);
                 Long usuarioId = jwtUtil.extraerUsuarioId(token);
 
-                // Creamos la autenticación con el rol en formato ROLE_XXX
+                // ENTREGAMOS EL ROL TAL CUAL VIENE EN EL TOKEN (sin prefijos)
                 var auth = new UsernamePasswordAuthenticationToken(
                         correo,
                         null,
-                        List.of(new SimpleGrantedAuthority("ROLE_" + rol.toUpperCase().replace(" ", "_")))
+                        List.of(new SimpleGrantedAuthority(rol))
                 );
 
-                // Guardamos el usuarioId como detalle para usarlo después
                 auth.setDetails(usuarioId);
-
                 SecurityContextHolder.getContext().setAuthentication(auth);
             }
         }

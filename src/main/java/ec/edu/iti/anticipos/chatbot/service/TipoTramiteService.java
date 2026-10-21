@@ -4,6 +4,7 @@ import ec.edu.iti.anticipos.chatbot.dto.request.TipoTramiteRequestDTO;
 import ec.edu.iti.anticipos.chatbot.dto.response.TipoTramiteResponseDTO;
 import ec.edu.iti.anticipos.chatbot.entity.TipoTramite;
 import ec.edu.iti.anticipos.chatbot.repository.TipoTramiteRepository;
+import ec.edu.iti.anticipos.chatbot.repository.TramiteRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -19,6 +20,7 @@ import java.util.Optional;
 public class TipoTramiteService {
 
     private final TipoTramiteRepository tipoTramiteRepository;
+    private final TramiteRepository tramiteRepository;
 
     // Listar todos los tipos de trámite
     public List<TipoTramiteResponseDTO> listarTodos() {
@@ -37,18 +39,37 @@ public class TipoTramiteService {
     // Guardar un nuevo tipo de trámite
     public TipoTramiteResponseDTO guardar(TipoTramiteRequestDTO dto) {
         TipoTramite tipo = new TipoTramite();
-        tipo.setNombre(dto.getNombre());
-
+        tipo.setNombre(dto.getNombre().toUpperCase().trim()); // <-- Mayúsculas
         TipoTramite guardado = tipoTramiteRepository.save(tipo);
         return convertirAResponse(guardado);
     }
 
+    // Actualizar un tipo de trámite existente
+    public TipoTramiteResponseDTO actualizar(Long id, TipoTramiteRequestDTO dto) {
+        TipoTramite tipo = tipoTramiteRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Tipo de trámite no encontrado"));
+
+        tipo.setNombre(dto.getNombre().toUpperCase().trim());
+
+        TipoTramite actualizado = tipoTramiteRepository.save(tipo);
+        return convertirAResponse(actualizado);
+    }
+
     // Eliminar un tipo de trámite por ID
     public void eliminar(Long id) {
+        TipoTramite tipo = tipoTramiteRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Tipo de trámite no encontrado"));
+
+        // Validar si está en uso usando el nuevo método
+        long tramitesAsociados = tramiteRepository.countByTipoTramiteTipoTramiteId(id);
+
+        if (tramitesAsociados > 0) {
+            throw new RuntimeException("No se puede eliminar: ya existen " + tramitesAsociados + " trámite(s) registrados con este tipo.");
+        }
+
         tipoTramiteRepository.deleteById(id);
     }
 
-    // Convertir entidad a DTO de respuesta
     private TipoTramiteResponseDTO convertirAResponse(TipoTramite tipo) {
         TipoTramiteResponseDTO dto = new TipoTramiteResponseDTO();
         dto.setTipoTramiteId(tipo.getTipoTramiteId());

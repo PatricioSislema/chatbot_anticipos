@@ -16,13 +16,6 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 import java.util.List;
 
-/**
- * Configuración de Spring Security.
- * - Habilita CORS para el frontend (React en localhost:5173)
- * - Define qué endpoints son públicos y cuáles requieren JWT
- * - Registra el filtro JWT
- * - Define el PasswordEncoder (BCrypt)
- */
 @Configuration
 @EnableMethodSecurity
 @RequiredArgsConstructor
@@ -43,9 +36,16 @@ public class SecurityConfig {
                         .requestMatchers("/api/telegram/**").permitAll()
                         .requestMatchers("/api/chatbot/**").permitAll()
 
-                        // ===== ENDPOINTS SOLO ADMINISTRADOR =====
-                        .requestMatchers("/api/roles/**").hasRole("ADMINISTRADOR")
-                        .requestMatchers("/api/tipos-tramite/**").hasRole("ADMINISTRADOR")
+                        // ===== ENDPOINTS CON ROL ESTRICTO =====
+                        // Usamos hasAuthority para que coincida con el nombre exacto de la BD ("Administrador")
+                        .requestMatchers("/api/usuarios/**").hasAuthority("Administrador")
+                        .requestMatchers("/api/roles/**").hasAuthority("Administrador")
+                        .requestMatchers("/api/tipos-tramite/**").hasAuthority("Administrador")
+
+                        // ===== ENDPOINTS PARA TODOS LOS AUTENTICADOS =====
+                        .requestMatchers("/api/ordenes/**").authenticated()
+                        .requestMatchers("/api/reembolsos/**").authenticated()
+                        .requestMatchers("/api/tramites/**").authenticated()
 
                         // ===== TODOS LOS DEMÁS REQUIEREN JWT =====
                         .anyRequest().authenticated()
@@ -58,12 +58,8 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
-        config.setAllowedOrigins(List.of(
-                "http://localhost:5173",           // React con Vite
-                "http://localhost:3000",           // React con CRA (por si acaso)
-                "https://tu-app.azurestaticapps.net" // cuando despliegues
-        ));
-        config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
+        config.setAllowedOrigins(List.of("http://localhost:5173", "http://localhost:3000"));
+        config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"));
         config.setAllowedHeaders(List.of("*"));
         config.setAllowCredentials(true);
 

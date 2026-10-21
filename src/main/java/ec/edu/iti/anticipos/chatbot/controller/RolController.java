@@ -9,11 +9,6 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
-/**
- * Controlador REST para la entidad Rol.
- * Expone los endpoints para gestionar los roles del sistema.
- * Solo accesible para el Administrador.
- */
 @RestController
 @RequestMapping("/api/roles")
 @RequiredArgsConstructor
@@ -21,13 +16,11 @@ public class RolController {
 
     private final RolService rolService;
 
-    // Listar todos los roles
     @GetMapping
     public ResponseEntity<List<RolResponseDTO>> listar() {
         return ResponseEntity.ok(rolService.listarTodos());
     }
 
-    // Buscar un rol por ID
     @GetMapping("/{id}")
     public ResponseEntity<RolResponseDTO> buscar(@PathVariable Long id) {
         return rolService.buscarPorId(id)
@@ -35,16 +28,26 @@ public class RolController {
                 .orElse(ResponseEntity.notFound().build());
     }
 
-    // Crear un nuevo rol
     @PostMapping
     public ResponseEntity<RolResponseDTO> crear(@RequestBody RolRequestDTO dto) {
         return ResponseEntity.ok(rolService.guardar(dto));
     }
 
-    // Eliminar un rol por ID
+    // Endpoint para actualizar (Lo usa el botón editar del frontend)
+    @PutMapping("/{id}")
+    public ResponseEntity<RolResponseDTO> actualizar(@PathVariable Long id, @RequestBody RolRequestDTO dto) {
+        return ResponseEntity.ok(rolService.actualizar(id, dto));
+    }
+
+    //  Endpoint  borrado lógico
     @DeleteMapping("/{id}")
-    public ResponseEntity<Void> eliminar(@PathVariable Long id) {
-        rolService.eliminar(id);
-        return ResponseEntity.noContent().build();
+    public ResponseEntity<?> eliminar(@PathVariable Long id) {
+        try {
+            rolService.eliminar(id);
+            return ResponseEntity.noContent().build();
+        } catch (RuntimeException e) {
+            // Devolvemos un 400 (Bad Request) con un JSON formateado
+            return ResponseEntity.badRequest().body(java.util.Map.of("message", e.getMessage()));
+        }
     }
 }

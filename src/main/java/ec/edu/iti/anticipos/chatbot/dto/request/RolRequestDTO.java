@@ -9,4 +9,5 @@ import lombok.Data;
 public class RolRequestDTO {
     private String nombre;
     private String descripcion;
+    private Boolean activo;
 }

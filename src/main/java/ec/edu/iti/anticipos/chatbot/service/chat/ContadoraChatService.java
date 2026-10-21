@@ -20,8 +20,10 @@ import ec.edu.iti.anticipos.chatbot.service.ReembolsoService;
 import ec.edu.iti.anticipos.chatbot.service.TramiteService;
 import ec.edu.iti.anticipos.chatbot.service.UsuarioService;
 import ec.edu.iti.anticipos.chatbot.sesion.SesionUsuario;
+import ec.edu.iti.anticipos.chatbot.util.MensajeHelper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -142,6 +144,32 @@ public class ContadoraChatService {
             return iniciarRechazo(sesion);
         }
 
+        // ✅ Si el usuario escribe texto inválido cuando está en el menú principal
+        if (sesion.getTramiteEnRevision() == null
+                && !mensajeLower.isEmpty()
+                && !mensajeLower.matches("\\d+")
+                && !mensajeLower.contains("menu")
+                && !mensajeLower.contains("menú")
+                && !mensajeLower.contains("ayuda")
+                && !mensajeLower.contains("cancelar")
+                && !mensajeLower.contains("salir")
+                && !mensajeLower.contains("pendiente")
+                && !mensajeLower.contains("revisar")
+                && !mensajeLower.contains("aprobar")
+                && !mensajeLower.contains("rechazar")
+                && !mensajeLower.contains("validar")
+                && !mensajeLower.contains("devolucion")
+                && !mensajeLower.contains("devolución")
+                && !mensajeLower.contains("reembolso")
+                && !mensajeLower.contains("comprobante")
+                && !mensajeLower.contains("informar")
+                && !mensajeLower.contains("cerrar")) {
+            return "⚠️ Por favor, ingresa un número válido según la acción que estés realizando:\n\n" +
+                    "• Para revisar un trámite: *el número del trámite*\n" +
+                    "• Para validar una devolución: *el número de la devolución*\n" +
+                    "• Para cerrar un reembolso: *el número del reembolso*";
+        }
+
         return null;
     }
 
@@ -198,11 +226,14 @@ public class ContadoraChatService {
                 .orElse(null);
         String correoDirector = usuarioService.obtenerCorreoPorRol("Director Financiero");
 
+        String mensaje = MensajeHelper.comprobanteRegistrado(tramiteId, monto.toString());
+
         if (correoFuncionario != null) {
             NotificacionRequestDTO notifFuncionario = new NotificacionRequestDTO();
             notifFuncionario.setTramiteId(tramiteId);
             notifFuncionario.setDestinatario(correoFuncionario);
             notifFuncionario.setTipo("Anticipo transferido");
+            notifFuncionario.setMensajePersonalizado(mensaje);
             notificacionService.guardar(notifFuncionario);
         }
 
@@ -211,6 +242,7 @@ public class ContadoraChatService {
             notifDirector.setTramiteId(tramiteId);
             notifDirector.setDestinatario(correoDirector);
             notifDirector.setTipo("Comprobante registrado - Anticipo transferido");
+            notifDirector.setMensajePersonalizado(mensaje);
             notificacionService.guardar(notifDirector);
         }
 
@@ -245,10 +277,14 @@ public class ContadoraChatService {
             return "⚠️ No se encontró una Colectora en la BD.";
         }
 
+        String mensaje = MensajeHelper.informarColectora(tramiteId, reembolso.getReembolsoId(),
+                reembolso.getMontoSolicitado().toString());
+
         NotificacionRequestDTO notifDTO = new NotificacionRequestDTO();
         notifDTO.setTramiteId(tramiteId);
         notifDTO.setDestinatario(correoColectora);
         notifDTO.setTipo("Reembolso autorizado - Generar orden de transferencia");
+        notifDTO.setMensajePersonalizado(mensaje + "\n\n📌 Escribe: *" + tramiteId + "* para generar la orden.");
         notificacionService.guardar(notifDTO);
 
         // Historial
@@ -307,11 +343,14 @@ public class ContadoraChatService {
                 .orElse(null);
         String correoDirector = usuarioService.obtenerCorreoPorRol("Director Financiero");
 
+        String mensaje = MensajeHelper.reembolsoCerrado(tramiteId, reembolso.getMontoSolicitado().toString());
+
         if (correoFuncionario != null) {
             NotificacionRequestDTO notifFuncionario = new NotificacionRequestDTO();
             notifFuncionario.setTramiteId(tramiteId);
             notifFuncionario.setDestinatario(correoFuncionario);
             notifFuncionario.setTipo("Liquidación cerrada - Reembolso procesado");
+            notifFuncionario.setMensajePersonalizado(mensaje);
             notificacionService.guardar(notifFuncionario);
         }
 
@@ -320,6 +359,7 @@ public class ContadoraChatService {
             notifDirector.setTramiteId(tramiteId);
             notifDirector.setDestinatario(correoDirector);
             notifDirector.setTipo("Liquidación cerrada - Reembolso procesado");
+            notifDirector.setMensajePersonalizado(mensaje);
             notificacionService.guardar(notifDirector);
         }
 
@@ -374,7 +414,8 @@ public class ContadoraChatService {
             }
             lista.append("\n");
         }
-        lista.append("\n👉 Escribe *seleccionar ID* o solo el número para revisar.");
+        lista.append("\n👉 Escribe el *número de la solicitud* que deseas revisar.");
+        lista.append("\nEjemplo: *13*.");
         return lista.toString();
     }
 
@@ -391,7 +432,8 @@ public class ContadoraChatService {
             lista.append("🆔 ").append(t.getTramiteId())
                     .append(" — ").append(t.getNombreUsuario()).append("\n");
         }
-        lista.append("\n👉 Escribe *seleccionar ID* o solo el número para revisar.");
+        lista.append("\n👉 Escribe el *número de la liquidación* que deseas revisar.");
+        lista.append("\nEjemplo: *13*.");
         return lista.toString();
     }
 
@@ -429,7 +471,8 @@ public class ContadoraChatService {
             }
         }
 
-        lista.append("\n👉 Escribe *seleccionar ID* o solo el número para revisar.");
+        lista.append("\n👉 Escribe el *número del trámite* que deseas revisar.");
+        lista.append("\nEjemplo: *13*.");
         return lista.toString();
     }
 
@@ -484,7 +527,8 @@ public class ContadoraChatService {
             if (d.getFechaPresentacion() != null) sb.append("📅 Fecha presentación: ").append(d.getFechaPresentacion()).append("\n");
         }
 
-        sb.append("\n¿Qué quieres hacer?");
+        sb.append("\n¿Qué deseas hacer con este trámite?");
+        sb.append("\n👉 Usa los botones de abajo para continuar.");
         return sb.toString();
     }
 
@@ -527,10 +571,17 @@ public class ContadoraChatService {
         if (correoColectora == null) {
             System.err.println("⚠️ No se encontró una Colectora en la BD.");
         } else {
+            String nombreSolicitante = tramiteService.obtenerDetalle(tramiteId)
+                    .map(TramiteDetalleDTO::getNombreUsuario)
+                    .orElse("N/A");
+
+            String mensaje = MensajeHelper.tramiteAprobado(tramiteId, nombreSolicitante, "Aprobado por Contadora");
+
             NotificacionRequestDTO notifDTO = new NotificacionRequestDTO();
             notifDTO.setTramiteId(tramiteId);
             notifDTO.setDestinatario(correoColectora);
             notifDTO.setTipo("Solicitud aprobada por Contadora");
+            notifDTO.setMensajePersonalizado(mensaje + "\n\n📌 Escribe: *" + tramiteId + "* para generar la orden.");
             notificacionService.guardar(notifDTO);
         }
 
@@ -608,10 +659,15 @@ public class ContadoraChatService {
                 respuesta.append("📋 Este reembolso debe ser autorizado por el *Director Financiero*.\n\n");
 
                 if (correoDirector != null) {
+                    String mensaje = MensajeHelper.liquidacionAprobada(
+                            tramiteId, "FALTANTE", saldo.abs().toString(),
+                            "💸 El ITI debe reembolsar $" + saldo.abs() + " al funcionario.");
+
                     NotificacionRequestDTO notifDirector = new NotificacionRequestDTO();
                     notifDirector.setTramiteId(tramiteId);
                     notifDirector.setDestinatario(correoDirector);
                     notifDirector.setTipo("Reembolso pendiente de autorización");
+                    notifDirector.setMensajePersonalizado(mensaje + "\n\n📌 Escribe: *reembolsos* para ver y autorizar.");
                     notificacionService.guardar(notifDirector);
                     respuesta.append("📬 Se ha notificado al *Director Financiero*.");
                 } else {
@@ -633,11 +689,14 @@ public class ContadoraChatService {
                 respuesta.append("✅ *Liquidación cerrada automáticamente.*\n");
                 respuesta.append("📌 No hay devolución ni reembolso pendiente.\n\n");
 
+                String mensajeCierre = MensajeHelper.liquidacionCerrada(tramiteId, "EXACTO", "0.00");
+
                 if (correoFuncionario != null) {
                     NotificacionRequestDTO notifDTO = new NotificacionRequestDTO();
                     notifDTO.setTramiteId(tramiteId);
                     notifDTO.setDestinatario(correoFuncionario);
                     notifDTO.setTipo("Liquidación cerrada");
+                    notifDTO.setMensajePersonalizado(mensajeCierre);
                     notificacionService.guardar(notifDTO);
                 }
 
@@ -646,6 +705,7 @@ public class ContadoraChatService {
                     notifDirector.setTramiteId(tramiteId);
                     notifDirector.setDestinatario(correoDirector);
                     notifDirector.setTipo("Liquidación cerrada (caso EXACTO)");
+                    notifDirector.setMensajePersonalizado(mensajeCierre);
                     notificacionService.guardar(notifDirector);
                 }
 
@@ -715,11 +775,14 @@ public class ContadoraChatService {
                 .orElse(null);
         String correoDirector = usuarioService.obtenerCorreoPorRol("Director Financiero");
 
+        String mensaje = MensajeHelper.devolucionValidada(tramiteId, devolucion.getMonto().toString());
+
         if (correoFuncionario != null) {
             NotificacionRequestDTO notifFuncionario = new NotificacionRequestDTO();
             notifFuncionario.setTramiteId(tramiteId);
             notifFuncionario.setDestinatario(correoFuncionario);
             notifFuncionario.setTipo("Liquidación cerrada - Devolución validada");
+            notifFuncionario.setMensajePersonalizado(mensaje);
             notificacionService.guardar(notifFuncionario);
         }
 
@@ -728,6 +791,7 @@ public class ContadoraChatService {
             notifDirector.setTramiteId(tramiteId);
             notifDirector.setDestinatario(correoDirector);
             notifDirector.setTipo("Liquidación cerrada - Devolución validada");
+            notifDirector.setMensajePersonalizado(mensaje);
             notificacionService.guardar(notifDirector);
         }
 

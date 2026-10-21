@@ -5,6 +5,8 @@ import ec.edu.iti.anticipos.chatbot.dto.response.LoginResponseDTO;
 import ec.edu.iti.anticipos.chatbot.dto.response.ResponseBot;
 import ec.edu.iti.anticipos.chatbot.service.chat.*;
 import ec.edu.iti.anticipos.chatbot.sesion.SesionUsuario;
+import ec.edu.iti.anticipos.chatbot.dto.response.TramiteDetalleDTO;
+import ec.edu.iti.anticipos.chatbot.service.TramiteService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
@@ -33,7 +35,7 @@ public class ChatbotService {
     private final AsistenteContableChatService asistenteContableChatService;
     private final ContadoraChatService contadoraChatService;
     private final DevolucionService devolucionService;
-
+    private final TramiteService tramiteService;
     private final Map<Long, SesionUsuario> sesiones = new HashMap<>();
     private static final long TIMEOUT_MINUTOS = 30;
 
@@ -104,6 +106,7 @@ public class ChatbotService {
                 && !mensajeLower.matches("revisar\\s+\\d+")
                 && !mensajeLower.matches("validar\\s+devolucion\\s+\\d+")
                 && !mensajeLower.matches("registrar\\s+comprobante\\s+\\d+")
+                && !mensajeLower.matches("ver\\s+detalles\\s+\\d+")
                 && !mensajeLower.matches("rechazar\\s+devolucion\\s+\\d+")
                 && !mensajeLower.matches("autorizar\\s+reembolso\\s+\\d+")
                 && !mensajeLower.matches("informar\\s+colectora\\s+\\d+")
@@ -192,6 +195,71 @@ public class ChatbotService {
         if (mensajeLower.equals("cerrar_sesion_no")) {
             sesion.setEsperandoConfirmacionCerrarSesion(false);
             return "👍 Perfecto, continúo con tu sesión.";
+        }
+
+        // ============================================
+        // CALLBACK: DESCARGAR FORMULARIO
+        // ============================================
+        if (mensajeLower.equals("descargar formulario")) {
+            Long tramiteId = sesion.getTramiteEnRevision();
+            if (tramiteId == null) {
+                return "⚠️ Primero selecciona un trámite.";
+            }
+            return "⚠️ *El archivo no está disponible para descarga.*\n\n" +
+                    "📌 *Razón:* Los PDFs no se almacenan en el servidor (limitación del prototipo).\n\n" +
+                    "📎 *¿Dónde encontrarlo?*\n" +
+                    "El archivo original está en el chat de Telegram donde el Funcionario lo subió.\n\n" +
+                    "📋 *Trámite:* #" + tramiteId + "\n\n" +
+                    "👉 *Trabajo futuro:* Implementar almacenamiento en Azure Blob Storage.";
+        }
+
+        // ============================================
+        // CALLBACK: DESCARGAR FACTURAS
+        // ============================================
+        if (mensajeLower.equals("descargar facturas")) {
+            Long tramiteId = sesion.getTramiteEnRevision();
+            if (tramiteId == null) {
+                return "⚠️ Primero selecciona un trámite.";
+            }
+            return "⚠️ *Los archivos no están disponibles para descarga.*\n\n" +
+                    "📌 *Razón:* Los PDFs no se almacenan en el servidor (limitación del prototipo).\n\n" +
+                    "📎 *¿Dónde encontrarlos?*\n" +
+                    "Los archivos originales están en el chat de Telegram donde el Funcionario los subió.\n\n" +
+                    "📋 *Trámite:* #" + tramiteId + "\n\n" +
+                    "👉 *Trabajo futuro:* Implementar almacenamiento en Azure Blob Storage.";
+        }
+
+        // ============================================
+        // CALLBACK: VER MIS DOCUMENTOS (Funcionario)
+        // ============================================
+        if (mensajeLower.equals("ver documentos")) {
+            if (sesion.getRolNombre() == null
+                    || !sesion.getRolNombre().equalsIgnoreCase("Funcionario")) {
+                return "⚠️ Esta opción es solo para Funcionarios.";
+            }
+
+            return "📄 *Descargar mis documentos*\n\n" +
+                    "Para descargar un documento, primero consulta el estado de tus trámites:\n\n" +
+                    "👉 Escribe *3* o *consultar estado*\n" +
+                    "👉 Luego escribe *ver detalles X* (donde X es el número del trámite)\n\n" +
+                    "📌 Los botones de descarga aparecerán automáticamente al ver el detalle.\n\n" +
+                    "⚠️ *Nota:* Los PDFs no se almacenan en el servidor (limitación del prototipo).";
+        }
+
+        // ============================================
+        //  GUARDAR CONTEXTO SEGÚN EL BOTÓN PRESIONADO
+        // ============================================
+        if (mensajeLower.equals("pendientes")) {
+            sesion.setContextoActual("PENDIENTES");
+            System.out.println(">>> Contexto guardado: PENDIENTES");
+        }
+        if (mensajeLower.equals("ordenes")) {
+            sesion.setContextoActual("ORDENES");
+            System.out.println(">>> Contexto guardado: ORDENES");
+        }
+        if (mensajeLower.equals("reembolsos")) {
+            sesion.setContextoActual("REEMBOLSOS");
+            System.out.println(">>> Contexto guardado: REEMBOLSOS");
         }
 
         // Comandos generales
@@ -429,9 +497,10 @@ public class ChatbotService {
                 ));
                 botones.add(ResponseBot.fila(
                         ResponseBot.boton("📋 Consultar estado", "3"),
-                        ResponseBot.boton("❓ Ayuda", "5")
+                        ResponseBot.boton("📄 Ver mis documentos", "ver documentos")
                 ));
                 botones.add(ResponseBot.fila(
+                        ResponseBot.boton("❓ Ayuda", "5"),
                         ResponseBot.boton("🚪 Cerrar sesión", "cerrar_sesion_confirmar")
                 ));
                 return botones;
@@ -452,6 +521,19 @@ public class ChatbotService {
             // Funcionario en operación (esperando PDF)
             if (rol != null && rol.equalsIgnoreCase("Funcionario")
                     && sesion.getAccionPendiente() != null) {
+
+                // ✅ Botones de descarga según la acción
+                if ("SOLICITAR".equals(sesion.getAccionPendiente())) {
+                    botones.add(ResponseBot.fila(
+                            ResponseBot.boton("📄 Descargar formulario de solicitud", "descargar formulario")
+                    ));
+                } else if ("LIQUIDAR".equals(sesion.getAccionPendiente())) {
+                    botones.add(ResponseBot.fila(
+                            ResponseBot.boton("📄 Descargar formulario de liquidación", "descargar formulario"),
+                            ResponseBot.boton("📎 Descargar facturas", "descargar facturas")
+                    ));
+                }
+
                 botones.add(ResponseBot.fila(
                         ResponseBot.boton("❌ Cancelar operación", "cancelar")
                 ));
@@ -467,9 +549,19 @@ public class ChatbotService {
                     && sesion.getTramiteEnRevision() == null
                     && !sesion.isEsperandoMotivoRechazo()) {
 
-                // Botón general para todos los aprobadores
+                // ✅ Botón específico por rol
+                String textoBotonPendientes;
+                if (rol.equalsIgnoreCase("Jefe Inmediato")
+                        || rol.equalsIgnoreCase("Director Financiero")) {
+                    textoBotonPendientes = "📋 Ver solicitudes pendientes";
+                } else if (rol.equalsIgnoreCase("Asistente Contable")) {
+                    textoBotonPendientes = "📋 Ver liquidaciones pendientes";
+                } else {
+                    textoBotonPendientes = "📋 Ver pendientes";
+                }
+
                 botones.add(ResponseBot.fila(
-                        ResponseBot.boton("📋 Ver pendientes", "pendientes")
+                        ResponseBot.boton(textoBotonPendientes, "pendientes")
                 ));
 
                 // ✅ Botones específicos de la Contadora
@@ -504,6 +596,9 @@ public class ChatbotService {
 
             // Revisando un trámite
             if (sesion.getTramiteEnRevision() != null && !sesion.isEsperandoMotivoRechazo()) {
+
+                // ✅ Botones de descarga comunes (según el tipo de trámite)
+                agregarBotonesDescarga(botones, sesion.getTramiteEnRevision());
 
                 if (rol != null && rol.equalsIgnoreCase("Colectora")) {
                     botones.add(ResponseBot.fila(
@@ -546,6 +641,7 @@ public class ChatbotService {
                     }
                 }
 
+                // ✅ Jefe, Director, Contadora (caso normal): aprobar/rechazar
                 botones.add(ResponseBot.fila(
                         ResponseBot.boton("✅ Aprobar", "aprobar"),
                         ResponseBot.boton("❌ Rechazar", "rechazar")
@@ -671,10 +767,10 @@ public class ChatbotService {
             return "⚠️ Tienes una pregunta pendiente.\n\n" +
                     "👉 Responde con los botones antes de enviar documentos.";
         }
-
         if (sesion.isProcesandoDocumento()) {
-            return "⏳ Todavía estoy procesando el documento anterior.\n\n" +
-                    "📌 Espera a que termine antes de enviar otro.";
+            return "⏳ *Estoy procesando tu documento.*\n\n" +
+                    "📌 Esto puede tardar 1-2 minutos (el OCR es lento).\n\n" +
+                    "⏰ *Espera un momento* y envíalo de nuevo si no ves respuesta.";
         }
 
         sesion.setProcesandoDocumento(true);
@@ -721,6 +817,12 @@ public class ChatbotService {
     // ============================================================
     private String delegarPorRol(String mensaje, String mensajeLower, SesionUsuario sesion) {
         String rol = sesion.getRolNombre();
+        // ✅ NUEVO: Comando "ver detalles X" (para todos los roles)
+        if (mensajeLower.matches("ver\\s+detalles\\s+\\d+")) {
+            Long tramiteId = Long.parseLong(mensajeLower.replaceAll("[^0-9]", ""));
+            return verDetallesTramite(tramiteId);
+        }
+
 
         String accion = sesion.getAccionPendiente();
         if (accion != null && !accion.isEmpty()) {
@@ -996,5 +1098,77 @@ public class ChatbotService {
             System.err.println("Error al verificar devolución: " + e.getMessage());
         }
         return null;
+    }
+
+    // ============================================================
+    // VER DETALLES DE UN TRÁMITE
+    // ============================================================
+    private String verDetallesTramite(Long tramiteId) {
+        Optional<TramiteDetalleDTO> detalleOpt = tramiteService.obtenerDetalle(tramiteId);
+
+        if (detalleOpt.isEmpty()) {
+            return "⚠️ No encontré el trámite #" + tramiteId + ".";
+        }
+
+        TramiteDetalleDTO d = detalleOpt.get();
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("📋 *Trámite #").append(d.getTramiteId()).append("*\n\n");
+        sb.append("👤 Solicitante: ").append(d.getNombreUsuario()).append("\n");
+        sb.append("📝 Tipo: ").append(d.getNombreTipoTramite()).append("\n");
+        sb.append("📅 Fecha creación: ").append(d.getFechaCreacion()).append("\n");
+        sb.append("📊 Estado: *").append(d.getEstado()).append("*\n");
+
+        // Datos de solicitud (si existen)
+        if (d.getPresupuesto() != null) {
+            sb.append("\n📝 *Datos de la solicitud:*\n");
+            if (d.getProposito() != null) sb.append("🎯 Propósito: ").append(d.getProposito()).append("\n");
+            if (d.getUnidad() != null) sb.append("🏢 Unidad: ").append(d.getUnidad()).append("\n");
+            if (d.getCampus() != null) sb.append("📍 Campus: ").append(d.getCampus()).append("\n");
+            if (d.getLugar() != null) sb.append("📌 Lugar: ").append(d.getLugar()).append("\n");
+            if (d.getFechaRealizacion() != null) sb.append("📅 Fecha realización: ").append(d.getFechaRealizacion()).append("\n");
+            sb.append("💰 Presupuesto: $").append(d.getPresupuesto()).append("\n");
+        }
+
+        // Datos de liquidación (si existen)
+        if (d.getTotalGastado() != null) {
+            sb.append("\n💰 *Datos de la liquidación:*\n");
+            sb.append("💵 Total gastado: $").append(d.getTotalGastado()).append("\n");
+            if (d.getSaldo() != null) sb.append("📈 Saldo: $").append(d.getSaldo()).append("\n");
+            if (d.getFechaPresentacion() != null) sb.append("📅 Fecha presentación: ").append(d.getFechaPresentacion()).append("\n");
+        }
+
+        sb.append("\n📄 *Documentos adjuntos:*\n");
+        sb.append("• Formulario: subido ✅\n");
+        sb.append("• Facturas: subidas ✅\n");
+
+        sb.append("\n👉 Usa los botones del menú para continuar.");
+
+        return sb.toString();
+    }
+    // ============================================================
+    // AGREGAR BOTONES DE DESCARGA SEGÚN EL TIPO DE TRÁMITE
+    // ============================================================
+    private void agregarBotonesDescarga(List<List<ResponseBot.Boton>> botones, Long tramiteId) {
+        if (tramiteId == null) return;
+
+        Optional<TramiteDetalleDTO> detalleOpt = tramiteService.obtenerDetalle(tramiteId);
+        if (detalleOpt.isEmpty()) return;
+
+        String tipo = detalleOpt.get().getNombreTipoTramite();
+        if (tipo == null) return;
+
+        String tipoLower = tipo.toLowerCase();
+
+        if (tipoLower.contains("liquidaci")) {
+            botones.add(ResponseBot.fila(
+                    ResponseBot.boton("📄 Descargar formulario de liquidación", "descargar formulario"),
+                    ResponseBot.boton("📎 Descargar facturas", "descargar facturas")
+            ));
+        } else if (tipoLower.contains("solicitud")) {
+            botones.add(ResponseBot.fila(
+                    ResponseBot.boton("📄 Descargar formulario de solicitud", "descargar formulario")
+            ));
+        }
     }
 }

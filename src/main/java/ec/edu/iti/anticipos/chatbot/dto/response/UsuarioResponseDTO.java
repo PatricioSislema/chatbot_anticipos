@@ -18,4 +18,8 @@ public class UsuarioResponseDTO {
     private Boolean bloqueado;
     private Integer intentosFallidos;
     private String telegramChatId;
+    private String telefono;
+    private String cargo;
+    private Long jefeInmediatoId;
+    private String jefeNombre;
 }
